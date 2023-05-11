@@ -50,9 +50,11 @@ public class R9ToGarminConverter {
                     try writer!.write(row: row)
                     rowsRecorded += 1
                 case let .newFile(date):
-                    let oldFile = CSVFile!
+                    let oldFile = CSVFile
                     (writer, CSVFile) = try startNewFile(date: date, directory: url)
-                    if rowsRecorded == 0 { try FileManager.default.removeItem(at: oldFile) }
+                    if let oldFile = oldFile {
+                        if rowsRecorded == 0 { try FileManager.default.removeItem(at: oldFile) }
+                    }
                     rowsRecorded = 0
             }
         }
