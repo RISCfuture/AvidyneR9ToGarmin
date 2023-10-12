@@ -12,7 +12,7 @@ public class R9ToGarminConverter {
     public func parseR9Records(from url: URL) async {
         inRecords.logger = logger
         
-        await withTaskGroup(of: Void.self) { group in
+        await withDiscardingTaskGroup { group in
             guard let fileEnumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.nameKey, .isDirectoryKey]) else {
                 self.logger?.info("Cannot enumerate",
                                   metadata: ["path": .string(url.path)])
@@ -91,7 +91,7 @@ public class R9ToGarminConverter {
     private func generateGarminRecords() -> AsyncStream<SortedRecord> {
         AsyncStream { continuation in
             Task {
-                await withTaskGroup(of: Void.self) { group in
+                await withDiscardingTaskGroup { group in
                     inRecords.eachDate { date, records, newFile in
                         group.addTask {
                             do {
