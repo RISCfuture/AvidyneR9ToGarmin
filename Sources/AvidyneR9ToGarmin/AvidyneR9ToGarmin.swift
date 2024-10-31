@@ -23,8 +23,8 @@ struct AvidyneR9ToGarmin: AsyncParsableCommand {
         logger.logLevel = verbose ? .info : .warning
         
         let converter = R9ToGarminConverter()
-        converter.logger = logger
-        
+        await converter.setLogger(logger)
+
         do {
             await converter.parseR9Records(from: input)
             try await converter.writeGarminRecords(to: output)

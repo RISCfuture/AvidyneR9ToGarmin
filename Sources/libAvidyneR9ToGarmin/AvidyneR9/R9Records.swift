@@ -1,15 +1,12 @@
 import Foundation
-import Dispatch
 import Logging
 
-class R9Records {
+actor R9Records {
     var logger: Logger? = nil
     
     private var records = Array<R9Record>()
     private var recordsForTimestamp = Dictionary<UInt, Array<Int>>()
-    private let recordsMutex = DispatchSemaphore(value: 1)
     private var delimiters = Set<UInt>()
-    private let delimitersMutex = DispatchSemaphore(value: 1)
     
     private static let recordingIntervals: Dictionary<R9RecordType, UInt> = [
         .engine: 4,
@@ -28,6 +25,10 @@ class R9Records {
         return Float(processedFiles + failedFiles)/Float(totalFiles)
     }
 
+    func setLogger(_ logger: Logger?) {
+        self.logger = logger
+    }
+
     func process(url: URL) async {
         self.totalFiles += 1
         
@@ -37,7 +38,7 @@ class R9Records {
                 return
             }
             
-            for await record in try parser.parse() {
+            for await record in try await parser.parse() {
                 switch record {
                     case let .record(record): self.add(record: record)
                     case let .powerOn(date): self.add(delimiterAt: UInt(date.timeIntervalSince1970))
@@ -53,9 +54,6 @@ class R9Records {
     }
     
     func reset() {
-        recordsMutex.wait()
-        defer { recordsMutex.signal() }
-        
         records.removeAll()
         recordsForTimestamp.removeAll()
         delimiters.removeAll()
@@ -63,32 +61,26 @@ class R9Records {
         failedFiles = 0
         totalFiles = 0
     }
-    
-    func eachDate(callback: (Date, Array<R9Record>, Bool) -> Void) {
-        delimitersMutex.wait()
-        var delimiters = self.delimiters.sorted { $1 < $0 }
-        delimitersMutex.signal()
-        
-        recordsMutex.wait()
-        defer { recordsMutex.signal() }
-        
-        for timestamp in recordsForTimestamp.keys.sorted() {
-            let date = Date(timeIntervalSince1970: TimeInterval(timestamp))
-            let values = recordsForTimestamp[timestamp]!.map { records[$0] }
-            var newFile = false
-            while delimiters.last != nil && delimiters.last! < timestamp {
-                _ = delimiters.popLast()
-                newFile = true
+
+    func dates() -> AsyncStream<(Date, Array<R9Record>, Bool)> {
+        AsyncStream { continuation in
+            var delimiters = self.delimiters.sorted { $1 < $0 }
+            for timestamp in recordsForTimestamp.keys.sorted() {
+                let date = Date(timeIntervalSince1970: TimeInterval(timestamp))
+                let values = recordsForTimestamp[timestamp]!.map { records[$0] }
+                var newFile = false
+                while delimiters.last != nil && delimiters.last! < timestamp {
+                    _ = delimiters.popLast()
+                    newFile = true
+                }
+
+                continuation.yield((date, values, newFile))
             }
-            
-            callback(date, values, newFile)
+            continuation.finish()
         }
     }
     
     private func add(record: R9Record) {
-        recordsMutex.wait()
-        defer { recordsMutex.signal() }
-        
         records.append(record)
         
         let timeStep = Self.recordingIntervals[record.type]!/2
@@ -105,9 +97,6 @@ class R9Records {
     }
     
     private func add(delimiterAt timestamp: UInt) {
-        delimitersMutex.wait()
-        defer { delimitersMutex.signal() }
-        
         delimiters.insert(timestamp)
     }
 }

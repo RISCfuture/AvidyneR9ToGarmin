@@ -1,95 +1,96 @@
 import Foundation
 
 extension R9ToGarminConverter {
-    func r9RecordsToGarminRecord(_ r9Records: Array<R9Record>, date: Date) throws -> GarminRecord {
+    func r9RecordsToGarminRecord(_ r9Records: Array<R9Record>, date: Date) async throws -> GarminRecord {
         let (engineRecord, flightRecord, systemRecord) = try recordCombiners(from: r9Records, date: date)
         
         var baroAltitude: Int? = nil
-        if let altimeterSetting = systemRecord.get(\.altimeterSetting),
-           let pressureAltitude = flightRecord.get(\.pressureAltitude) {
+        if let altimeterSetting = await systemRecord.get(\.altimeterSetting),
+           let pressureAltitude = await flightRecord.get(\.pressureAltitude) {
             baroAltitude = pressureAltitude + Int(((altimeterSetting - 29.92)*1000).rounded()) //TODO is this good enough?
         }
         
         var autopilotOn = false
-        if let latActive = flightRecord.get(\.DFC100_activeLateralMode),
-           let vertActive = flightRecord.get(\.DFC100_activeVerticalMode) {
+        if let latActive = await flightRecord.get(\.DFC100_activeLateralMode),
+           let vertActive = await flightRecord.get(\.DFC100_activeVerticalMode) {
             autopilotOn = latActive != 0 && vertActive != 0
         }
         
-        let navSource = indexToStr(systemRecord.get(\.courseSelect, strategy: .mode), values: Self.cdiSources)
+        let navSource = await indexToStr(systemRecord.get(\.courseSelect, strategy: .mode), values: Self.cdiSources)
         let FMS = navSource == "GPS1"
         
         var GPSNavDeviation: Float? = nil
-        if let xdev = systemRecord.get(\.crossTrackDeviation),
-           let FMSMode = systemRecord.get(\.courseSelect, strategy: .mode) {
+        if let xdev = await systemRecord.get(\.crossTrackDeviation),
+           let FMSMode = await systemRecord.get(\.courseSelect, strategy: .mode) {
             GPSNavDeviation = xdev/Self.fmsCDIScales[Int(FMSMode)]
         }
         
-        let latitude = flightRecord.get(\.GPSLatitude)
-        let longitude = flightRecord.get(\.GPSLongitude)
-        let altitudeGPS = m_ft_i(systemRecord.get(\.GPSAltitudeMSL))
-        let GPSFixStatus = indexToStr(systemRecord.get(\.GPSState, strategy: .mode), values: Self.gpsStates)
-        let groundSpeed = to_f(systemRecord.get(\.groundSpeed))
-        let groundTrack = magToTrue(systemRecord.get(\.groundTrack, strategy: .bearing), var: systemRecord.get(\.magneticVariation))
-        let heading = flightRecord.get(\.heading, strategy: .bearing)
-        let pressureAltitude = flightRecord.get(\.pressureAltitude)
-        let verticalSpeed = flightRecord.get(\.verticalSpeed)
-        let indicatedAirspeed = to_f(flightRecord.get(\.indicatedAirspeed))
-        let trueAirspeed = to_f(flightRecord.get(\.trueAirspeed))
-        let pitch = flightRecord.get(\.pitch)
-        let roll = flightRecord.get(\.roll)
-        let lateralAcceleration = flightRecord.get(\.lateralAcceleration)
-        let normalAcceleration = flightRecord.get(\.filteredNormalAcceleration) ?? flightRecord.get(\.normalAcceleration)
-        let headingBug = systemRecord.get(\.headingBug, strategy: .mode)
-        let altitudeBug = systemRecord.get(\.altitudeBug, strategy: .mode)
-        let altimeterSetting = systemRecord.get(\.altimeterSetting, strategy: .mode)
-        
-        let navIdentifier = systemRecord.get(\.activeWaypoint)
-        let navFrequency = kHz_MHz(systemRecord.get(\.navFrequency, strategy: .mode))
-        let navDistance = systemRecord.get(\.distanceToWaypoint)
-        let navBearing = FMS
+        let latitude = await flightRecord.get(\.GPSLatitude)
+        let longitude = await flightRecord.get(\.GPSLongitude)
+        let altitudeGPS = await m_ft_i(systemRecord.get(\.GPSAltitudeMSL))
+        let GPSFixStatus = await indexToStr(systemRecord.get(\.GPSState, strategy: .mode), values: Self.gpsStates)
+        let groundSpeed = await to_f(systemRecord.get(\.groundSpeed))
+        let groundTrack = await magToTrue(systemRecord.get(\.groundTrack, strategy: .bearing), var: systemRecord.get(\.magneticVariation))
+        let heading = await flightRecord.get(\.heading, strategy: .bearing)
+        let pressureAltitude = await flightRecord.get(\.pressureAltitude)
+        let verticalSpeed = await flightRecord.get(\.verticalSpeed)
+        let indicatedAirspeed = await to_f(flightRecord.get(\.indicatedAirspeed))
+        let trueAirspeed = await to_f(flightRecord.get(\.trueAirspeed))
+        let pitch = await flightRecord.get(\.pitch)
+        let roll = await flightRecord.get(\.roll)
+        let lateralAcceleration = await flightRecord.get(\.lateralAcceleration)
+        let unfilteredNormal = await flightRecord.get(\.normalAcceleration)
+        let normalAcceleration = await flightRecord.get(\.filteredNormalAcceleration) ?? unfilteredNormal
+        let headingBug = await systemRecord.get(\.headingBug, strategy: .mode)
+        let altitudeBug = await systemRecord.get(\.altitudeBug, strategy: .mode)
+        let altimeterSetting = await systemRecord.get(\.altimeterSetting, strategy: .mode)
+
+        let navIdentifier = await systemRecord.get(\.activeWaypoint)
+        let navFrequency = await kHz_MHz(systemRecord.get(\.navFrequency, strategy: .mode))
+        let navDistance = await systemRecord.get(\.distanceToWaypoint)
+        let navBearing = await FMS
             ? systemRecord.get(\.navaidBearing, strategy: .bearing)
             : nil
-        let navCourse = FMS
+        let navCourse = await FMS
             ? systemRecord.get(\.desiredTrack, strategy: .bearing)
             : systemRecord.get(\.OBS, strategy: .bearing)
-        let crossTrackDistance = FMS
+        let crossTrackDistance = await FMS
             ? systemRecord.get(\.crossTrackDeviation)
             : nil
-        let horizontalCDIDeflection = FMS
+        let horizontalCDIDeflection = await FMS
             ? GPSNavDeviation
             : systemRecord.get(\.localizerDeviation)
-        let horizontalCDIScale = FMS
+        let horizontalCDIScale = await FMS
             ? indexToStr(systemRecord.get(\.navigationMode, strategy: .mode), values: Self.fmsModes)
             : nil
-        let verticalCDIDeflection = FMS
+        let verticalCDIDeflection = await FMS
             ? nil
             : systemRecord.get(\.glideslopeDeviation)
-        let VNAVTargetAltitude = flightRecord.get(\.DFC100_altitudeTarget, strategy: .mode)
-        let FDLateralMode = autopilotModeStr(active: flightRecord.get(\.DFC100_activeLateralMode, strategy: .mode),
+        let VNAVTargetAltitude = await flightRecord.get(\.DFC100_altitudeTarget, strategy: .mode)
+        let FDLateralMode = await autopilotModeStr(active: flightRecord.get(\.DFC100_activeLateralMode, strategy: .mode),
                                              armed: flightRecord.get(\.DFC100_armedLateralMode, strategy: .mode),
                                              values: Self.autopilotLateralModes)
-        let FDVerticalMode = autopilotModeStr(active: flightRecord.get(\.DFC100_activeVerticalMode, strategy: .mode),
+        let FDVerticalMode = await autopilotModeStr(active: flightRecord.get(\.DFC100_activeVerticalMode, strategy: .mode),
                                               armed: flightRecord.get(\.DFC100_armedVerticalMode, strategy: .mode),
                                               values: Self.autopilotVerticalModes)
-        let FDRollCommand = flightRecord.get(\.FDRoll)
-        let FDPitchCommand = flightRecord.get(\.FDPitch)
-        let APRollCommand = autopilotOn ? flightRecord.get(\.FDRoll) : nil
-        let APPitchCommand = autopilotOn ? flightRecord.get(\.FDPitch) : nil
-        let magneticVariation = systemRecord.get(\.magneticVariation)
-        let outsideAirTemperature = to_f(systemRecord.get(\.oat))
-        let heightAGL = m_ft_i(systemRecord.get(\.GPSHeightAGL))
-        let oilTemperature = engineRecord.get(\.oilTemperature)
-        let oilPressure = engineRecord.get(\.oilPressure)
-        let RPM = engineRecord.get(\.RPM)
-        let manifoldPressure = engineRecord.get(\.manifoldPressure)
-        let potential1 = engineRecord.get(\.mainBus1Potential)
-        let potential2 = engineRecord.get(\.emergencyBusPotential)
-        let fuelFlow = engineRecord.get(\.fuelFlow)
-        let CHTs = engineRecord.get(\.CHTs).map { to_i($0) }
-        let EGTs = engineRecord.get(\.EGTs).map { to_i($0) }
-        let percentPower = to_ui8(engineRecord.get(\.percentPower))
-        
+        let FDRollCommand = await flightRecord.get(\.FDRoll)
+        let FDPitchCommand = await flightRecord.get(\.FDPitch)
+        let APRollCommand = await autopilotOn ? flightRecord.get(\.FDRoll) : nil
+        let APPitchCommand = await autopilotOn ? flightRecord.get(\.FDPitch) : nil
+        let magneticVariation = await systemRecord.get(\.magneticVariation)
+        let outsideAirTemperature = await to_f(systemRecord.get(\.oat))
+        let heightAGL = await m_ft_i(systemRecord.get(\.GPSHeightAGL))
+        let oilTemperature = await engineRecord.get(\.oilTemperature)
+        let oilPressure = await engineRecord.get(\.oilPressure)
+        let RPM = await engineRecord.get(\.RPM)
+        let manifoldPressure = await engineRecord.get(\.manifoldPressure)
+        let potential1 = await engineRecord.get(\.mainBus1Potential)
+        let potential2 = await engineRecord.get(\.emergencyBusPotential)
+        let fuelFlow = await engineRecord.get(\.fuelFlow)
+        let CHTs = await engineRecord.get(\.CHTs).map { to_i($0) }
+        let EGTs = await engineRecord.get(\.EGTs).map { to_i($0) }
+        let percentPower = await to_ui8(engineRecord.get(\.percentPower))
+
         return .init(date: date,
                      latitude: latitude,
                      longitude: longitude,
