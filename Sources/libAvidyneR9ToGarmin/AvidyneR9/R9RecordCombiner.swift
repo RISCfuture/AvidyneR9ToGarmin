@@ -1,7 +1,7 @@
 import Foundation
-import VectorMath
+@preconcurrency import VectorMath
 
-class R9RecordCombiner<RecordType: R9Record> {
+actor R9RecordCombiner<RecordType: R9Record> {
     private let records: Array<RecordType>
     
     init(records: Array<RecordType>) {

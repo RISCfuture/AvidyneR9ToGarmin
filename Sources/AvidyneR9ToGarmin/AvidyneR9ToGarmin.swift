@@ -7,12 +7,12 @@ import libAvidyneR9ToGarmin
 struct AvidyneR9ToGarmin: AsyncParsableCommand {
     @Argument(help: "The directory where Avidyne R9 CSVs are stored.",
               completion: .directory,
-              transform: URL.init(fileURLWithPath:))
+              transform: { URL(filePath: $0, directoryHint: .isDirectory) })
     var input: URL
     
     @Argument(help: "The directory to contain the generated Garmin CSV files.",
               completion: .directory,
-              transform: URL.init(fileURLWithPath:))
+              transform: { URL(filePath: $0, directoryHint: .isDirectory) })
     var output: URL
     
     @Flag(help: "Include extra information in the output.")
@@ -23,8 +23,8 @@ struct AvidyneR9ToGarmin: AsyncParsableCommand {
         logger.logLevel = verbose ? .info : .warning
         
         let converter = R9ToGarminConverter()
-        converter.logger = logger
-        
+        await converter.setLogger(logger)
+
         do {
             await converter.parseR9Records(from: input)
             try await converter.writeGarminRecords(to: output)

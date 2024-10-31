@@ -1,7 +1,7 @@
 import Foundation
 import CodableCSV
 
-class R9RecordParser<RecordType> where RecordType: R9Record {
+actor R9RecordParser<RecordType> where RecordType: R9Record {
     let row: CSVReader.Record
     var record: RecordType
     

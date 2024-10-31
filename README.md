@@ -6,8 +6,7 @@ expect logs in Garmin format.
 ## Installation
 
 AvidyneR9ToGarmin is a Swift Package Manager project with an executable target.
-It has been tested on macOS 12 using Swift 5.6, but will likely work on other
-platforms.
+It has been developed for macOS 15 using Swift 6.
 
 1. Edit the `Sources/libAvidyneR9ToGarmin/Converter/R9ToGarminConverter.swift`
    file. Change the `private static let headers` constant; in particular, the

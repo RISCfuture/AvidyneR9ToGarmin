@@ -6,7 +6,7 @@ enum R9RecordType {
     case system
 }
 
-protocol R9Record {
+protocol R9Record: Sendable {
     var type: R9RecordType { get }
     var systime: UInt? { get }
     var date: Date? { get }
