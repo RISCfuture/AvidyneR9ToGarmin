@@ -124,7 +124,7 @@ actor R9FileParser {
             "path": .string(path)
         ]
 
-        if let rowIndex = rowIndex {
+        if let rowIndex {
             metadata["line"] = .string(String(rowIndex))
         }
 

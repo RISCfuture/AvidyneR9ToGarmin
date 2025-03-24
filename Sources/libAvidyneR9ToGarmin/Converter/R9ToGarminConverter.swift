@@ -60,7 +60,7 @@ public actor R9ToGarminConverter {
                 case let .newFile(date):
                     let oldFile = CSVFile
                     (writer, CSVFile) = try startNewFile(date: date, directory: url)
-                    if let oldFile = oldFile {
+                    if let oldFile {
                         if rowsRecorded == 0 { try FileManager.default.removeItem(at: oldFile) }
                     }
                     rowsRecorded = 0

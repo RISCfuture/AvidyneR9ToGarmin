@@ -3,28 +3,21 @@ import Foundation
 extension R9ToGarminConverter {
     func r9RecordsToGarminRecord(_ r9Records: Array<R9Record>, date: Date) async throws -> GarminRecord {
         let (engineRecord, flightRecord, systemRecord) = try recordCombiners(from: r9Records, date: date)
-        
-        var baroAltitude: Int? = nil
-        if let altimeterSetting = await systemRecord.get(\.altimeterSetting),
-           let pressureAltitude = await flightRecord.get(\.pressureAltitude) {
-            baroAltitude = pressureAltitude + Int(((altimeterSetting - 29.92)*1000).rounded()) //TODO is this good enough?
-        }
-        
-        var autopilotOn = false
-        if let latActive = await flightRecord.get(\.DFC100_activeLateralMode),
-           let vertActive = await flightRecord.get(\.DFC100_activeVerticalMode) {
-            autopilotOn = latActive != 0 && vertActive != 0
-        }
-        
+
+        let baroAltitude = await zipOptionals(systemRecord.get(\.altimeterSetting), flightRecord.get(\.pressureAltitude))
+            .map { altimeterSetting, pressureAltitude in
+                pressureAltitude + Int(((altimeterSetting - 29.92)*1000).rounded()) //TODO is this good enough?
+            }
+
+        let autopilotOn = await zipOptionals(flightRecord.get(\.DFC100_activeLateralMode), flightRecord.get(\.DFC100_activeVerticalMode))
+            .map { $0 != 0 && $1 != 0 } ?? false
+
         let navSource = await indexToStr(systemRecord.get(\.courseSelect, strategy: .mode), values: Self.cdiSources)
         let FMS = navSource == "GPS1"
-        
-        var GPSNavDeviation: Float? = nil
-        if let xdev = await systemRecord.get(\.crossTrackDeviation),
-           let FMSMode = await systemRecord.get(\.courseSelect, strategy: .mode) {
-            GPSNavDeviation = xdev/Self.fmsCDIScales[Int(FMSMode)]
-        }
-        
+
+        let GPSNavDeviation = await zipOptionals(systemRecord.get(\.crossTrackDeviation), systemRecord.get(\.courseSelect, strategy: .mode))
+            .map { xdev, FMSMode in xdev/Self.fmsCDIScales[Int(FMSMode)] }
+
         let latitude = await flightRecord.get(\.GPSLatitude)
         let longitude = await flightRecord.get(\.GPSLongitude)
         let altitudeGPS = await m_ft_i(systemRecord.get(\.GPSAltitudeMSL))
@@ -68,11 +61,11 @@ extension R9ToGarminConverter {
             : systemRecord.get(\.glideslopeDeviation)
         let VNAVTargetAltitude = await flightRecord.get(\.DFC100_altitudeTarget, strategy: .mode)
         let FDLateralMode = await autopilotModeStr(active: flightRecord.get(\.DFC100_activeLateralMode, strategy: .mode),
-                                             armed: flightRecord.get(\.DFC100_armedLateralMode, strategy: .mode),
-                                             values: Self.autopilotLateralModes)
+                                                   armed: flightRecord.get(\.DFC100_armedLateralMode, strategy: .mode),
+                                                   values: Self.autopilotLateralModes)
         let FDVerticalMode = await autopilotModeStr(active: flightRecord.get(\.DFC100_activeVerticalMode, strategy: .mode),
-                                              armed: flightRecord.get(\.DFC100_armedVerticalMode, strategy: .mode),
-                                              values: Self.autopilotVerticalModes)
+                                                    armed: flightRecord.get(\.DFC100_armedVerticalMode, strategy: .mode),
+                                                    values: Self.autopilotVerticalModes)
         let FDRollCommand = await flightRecord.get(\.FDRoll)
         let FDPitchCommand = await flightRecord.get(\.FDPitch)
         let APRollCommand = await autopilotOn ? flightRecord.get(\.FDRoll) : nil
@@ -146,104 +139,104 @@ extension R9ToGarminConverter {
                      EGTs: EGTs,
                      percentPower: percentPower)
     }
-    
+
     private func recordCombiners(from records: Array<R9Record>, date: Date) throws -> (R9RecordCombiner<R9EngineRecord>, R9RecordCombiner<R9FlightRecord>, R9RecordCombiner<R9SystemRecord>) {
         let engineRecords: Array<R9EngineRecord> = records.filter { $0.type == .engine } as! Array<R9EngineRecord>
         guard !engineRecords.isEmpty else { throw AvidyneR9ToGarminError.incompleteRecordsForDate(date) }
         let engineCombiner = R9RecordCombiner(records: engineRecords)
-        
+
         let flightRecords: Array<R9FlightRecord> = records.filter { $0.type == .flight } as! Array<R9FlightRecord>
         guard !flightRecords.isEmpty else { throw AvidyneR9ToGarminError.incompleteRecordsForDate(date) }
         let flightCombiner = R9RecordCombiner(records: flightRecords)
-        
+
         let systemRecords: Array<R9SystemRecord> = records.filter { $0.type == .system } as! Array<R9SystemRecord>
         guard !systemRecords.isEmpty else { throw AvidyneR9ToGarminError.incompleteRecordsForDate(date) }
         let systemCombiner = R9RecordCombiner(records: systemRecords)
-        
+
         return (engineCombiner, flightCombiner, systemCombiner)
     }
-    
+
     private func m_ft(_ m: Float?) -> Float? {
         guard let m = m else { return nil }
         return m * 3.28084
     }
-    
+
     private func m_ft(_ m: Int?) -> Float? {
         guard let m = m else { return nil }
         return m_ft(Float(m))
     }
-    
+
     private func m_ft_i(_ m: Float?) -> Int? {
         guard let ft = m_ft(m) else { return nil }
         return Int(ft.rounded())
     }
-    
+
     private func m_ft_i(_ m: Int?) -> Int? {
         guard let m = m else { return nil }
         guard let ft = m_ft_i(Float(m)) else { return nil }
         return Int(ft)
     }
-    
+
     private func kHz_MHz(_ kHz: UInt?) -> Float? {
         guard let kHz = kHz else { return nil }
         return Float(kHz)/1000
     }
-    
+
     private func to_f(_ i: Int?) -> Float? {
         guard let i = i else { return nil }
         return Float(i)
     }
-    
+
     private func to_f(_ i: UInt?) -> Float? {
         guard let i = i else { return nil }
         return Float(i)
     }
-    
+
     private func to_i(_ f: Float?) -> Int? {
         guard let f = f else { return nil }
         return Int(f.rounded())
     }
-    
+
     private func to_ui8(_ f: Float?) -> UInt8? {
         guard let f = f else { return nil }
         return UInt8(f.rounded())
     }
-    
+
     private func magToTrue(_ mag: Int?, `var`: Float?) -> UInt16? {
         guard let mag = mag, let `var` = `var` else { return nil }
         let `true` = Int((Float(mag) + `var`).rounded())
         return normalizedHeading(`true`)
     }
-    
+
     private func magToTrue(_ mag: Float?, `var`: Float?) -> Float? {
         guard let mag = mag, let `var` = `var` else { return nil }
         let `true` = Float(mag) + `var`
         return normalizedHeading(`true`)
     }
-    
+
     private func normalizedHeading(_ heading: Int?) -> UInt16? {
         guard let heading = heading else { return nil }
 
         var modHeading = heading % 360
         if modHeading < 0 { modHeading += 360 }
-        
+
         return UInt16(modHeading)
     }
-    
+
     private func normalizedHeading(_ heading: Float?) -> Float? {
         guard let heading = heading else { return nil }
-        
+
         var modHeading = heading.truncatingRemainder(dividingBy: 360)
         if modHeading < 0 { modHeading += 360 }
-        
+
         return modHeading
     }
-    
+
     private func indexToStr(_ index: UInt8?, values: Array<String?>) -> String? {
         guard let index = index else { return nil }
         return values[Int(index)]
     }
-    
+
     private static let gpsStates: Array<String?> = ["NoSoln", "NoSoln", "NoSoln", "NoSoln", "3D-", "3D", "3DDiff"]
     private static let fmsModes: Array<String?> = ["OCN", "ENR", "TERM", "DEP", "GA", "APCH"]
     private static let fmsCDIScales: Array<Float> = [30380.6, 12152.2, 6076.12, 6076.12, 6076.12, 1822.83]
@@ -251,18 +244,14 @@ extension R9ToGarminConverter {
     private static let gpsSources: Array<String?> = ["AUTO", "GPS1", "GPS2"]
     private static let autopilotLateralModes: Array<String?> = [nil, "ROLL", "HDG", "LOC", "LOC-BC", "VOR", "VOR-APPR", "APPR", "NAV", "NAV-INTCPT"]
     private static let autopilotVerticalModes: Array<String?> = [nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, "PITCH", "IAS", "VS", "ALT", "GS", "ALT-GS", "VNAV-ALT", "VNAV-VS"]
-    
+
     private func autopilotModeStr(active: UInt8?, armed: UInt8?, values: Array<String?>) -> String? {
         guard let active = active else { return nil }
         guard let activeStr = values[Int(active)] else { return nil }
-        
-        if let armed = armed {
-            let armedStr = values[Int(armed)]
-            if let armedStr = armedStr {
-                return "\(activeStr) (\(armedStr))"
-            } else {
-                return activeStr
-            }
+
+
+        if let armed, let armedStr = values[Int(armed)] {
+            return "\(activeStr) (\(armedStr))"
         } else {
             return activeStr
         }
