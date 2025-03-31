@@ -52,7 +52,7 @@ struct GarminRecord {
     let potential1: Float? // V
     let potential2: Float? // V
     let fuelFlow: Float? // gph
-    let CHTs: Array<Int?> // °F
-    let EGTs: Array<Int?> // °F
+    let CHTs: [Int?] // °F
+    let EGTs: [Int?] // °F
     let percentPower: UInt8? // %
 }

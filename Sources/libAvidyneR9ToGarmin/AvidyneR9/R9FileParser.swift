@@ -1,6 +1,6 @@
+@preconcurrency import CodableCSV
 import Foundation
 import Logging
-@preconcurrency import CodableCSV
 
 let powerOnSentinel = "<<<< **** POWER ON **** >>>>"
 let incrementalExtractSentinel = "<< Incremental extract >>"
@@ -12,13 +12,7 @@ enum R9LogEntry: Sendable {
 }
 
 actor R9FileParser {
-    let url: URL
-    let type: R9RecordType
-    var logger: Logger? = nil
-
-    private var path: String { url.path }
-
-    private static let engineFields: Dictionary<String, Array<String>> = [
+    private static let engineFields: [String: [String]] = [
         "oilTemperature": ["Eng1 Oil Temperature", "Eng1OilTemperature(°F)"],
         "oilPressure": ["Eng1 Oil Pressure", "Eng1OilPressure"],
         "RPM": ["Eng1 RPM", "Eng1RPM"],
@@ -38,7 +32,7 @@ actor R9FileParser {
         //        "_bat2Current": ["Eng1 Bat2 current (A)", "Eng1Bat2current(A)"],
         "mainBus1Potential": ["Eng1 MBus1 Volts", "Eng1Bus1Volts"],
         //        "_mainBus2Potential": ["Eng1 MBus2 Volts", "Eng1Bus2Volts"],
-        "emergencyBusPotential": ["Eng1 Bus2 Volts", "Eng1Bus3Volts"],
+        "emergencyBusPotential": ["Eng1 Bus2 Volts", "Eng1Bus3Volts"]
         //        "_fuelQuantityLeft": ["L Fuel Qty"],
         //        "_fuelQuantityRight": ["R Fuel Qty"],
         //        "_deiceVacuum": ["DeiceVac (in-hg)"],
@@ -52,7 +46,13 @@ actor R9FileParser {
         //        "_discreteOutputs": ["Eng1 Discrete Outputs", "Eng1DiscreteOutputs"]
     ]
 
-    private var engineFields: Dictionary<String, String> = [:]
+    let url: URL
+    let type: R9RecordType
+    var logger: Logger?
+
+    private var path: String { url.path }
+
+    private var engineFields: [String: String] = [:]
 
     init?(url: URL, logger: Logger? = nil) throws {
         self.url = url
@@ -70,10 +70,10 @@ actor R9FileParser {
 
     func parse() throws -> AsyncStream<R9LogEntry> {
         let string = try CSVString(url: url)
-        let reader = try CSVReader(input: string) {
-            $0.headerStrategy = .firstLine
-            $0.delimiters.row = .standard
-            $0.trimStrategy = .whitespaces
+        let reader = try CSVReader(input: string) { config in
+            config.headerStrategy = .firstLine
+            config.delimiters.row = .standard
+            config.trimStrategy = .whitespaces
         }
 
         return AsyncStream { continuation in
@@ -106,7 +106,7 @@ actor R9FileParser {
             .replacingOccurrences(of: incrementalExtractSentinel, with: "")
     }
 
-    private func parseRow(_ row: CSVReader.Record, headers: Array<String>) async throws -> R9LogEntry {
+    private func parseRow(_ row: CSVReader.Record, headers: [String]) async throws -> R9LogEntry {
         let record: R9LogEntry
         switch type {
             case .engine:
@@ -295,7 +295,7 @@ actor R9FileParser {
         return await .record(parser.record)
     }
 
-    private func determineEngineFields(header: Array<String>) throws {
+    private func determineEngineFields(header: [String]) throws {
         for (localField, externalFields) in Self.engineFields {
             guard let externalField = externalFields.first(where: { field in
                 let indexField = field.replacingOccurrences(of: "#", with: "1")

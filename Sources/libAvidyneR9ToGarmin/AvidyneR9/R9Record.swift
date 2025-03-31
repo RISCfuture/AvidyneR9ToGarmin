@@ -14,17 +14,17 @@ protocol R9Record: Sendable {
 
 struct R9EngineRecord: R9Record {
     var type = R9RecordType.engine
-    
+
     var systime: UInt?
     var date: Date?
-    
+
     var oilTemperature: Int? // °F
     var oilPressure: UInt? // psi
     var RPM: UInt? // rpm
     var manifoldPressure: Float? // inHg
 //    var TIT: Int? // °F
-    var CHTs: Array<Float?> = [] // °F
-    var EGTs: Array<Float?> = [] // °F
+    var CHTs: [Float?] = [] // °F
+    var EGTs: [Float?] = [] // °F
     var percentPower: Float? // 0..100
     var fuelFlow: Float? // gph
     var fuelUsed: Float? // gal
@@ -53,10 +53,10 @@ struct R9EngineRecord: R9Record {
 
 struct R9FlightRecord: R9Record {
     var type = R9RecordType.flight
-    
+
     var systime: UInt?
     var date: Date?
-    
+
     var filteredNormalAcceleration: Float? // g
     var normalAcceleration: Float? // g
     var longitudinalAcceleration: Float? // g
@@ -96,10 +96,10 @@ struct R9FlightRecord: R9Record {
 
 struct R9SystemRecord: R9Record {
     var type = R9RecordType.system
-    
+
     var systime: UInt?
     var date: Date?
-    
+
     var oat: Int? // °C
     var localizerDeviation: Float? // -1..1
     var glideslopeDeviation: Float? // -1..1

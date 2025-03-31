@@ -38,9 +38,8 @@ let package = Package(
             ]),
         .testTarget(
             name: "AvidyneR9ToGarminTests",
-            dependencies: ["libAvidyneR9ToGarmin"]),
+            dependencies: ["libAvidyneR9ToGarmin"])
     ],
 
     swiftLanguageModes: [.v6]
 )
-

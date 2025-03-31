@@ -1,7 +1,7 @@
-fileprivate let UTCOffset = "+00:00"
+private let UTCOffset = "+00:00"
 
 extension R9ToGarminConverter {
-    func garminRecordToRow(_ record: GarminRecord) -> Array<String> {
+    func garminRecordToRow(_ record: GarminRecord) -> [String] {
         return [
             record.date.formatted(.iso8601.dateSeparator(.dash).year().month().day()),
             record.date.formatted(.iso8601.timeSeparator(.colon).time(includingFractionalSeconds: false)),
@@ -109,18 +109,17 @@ extension R9ToGarminConverter {
             "" // engine cycle count
         ]
     }
-    
+
     private func format(_ value: Float?, precision: UInt = 0) -> String {
-        guard let value = value else { return "" }
+        guard let value else { return "" }
         return String(format: "%.\(precision)f", value)
     }
-    
+
     private func format<T>(_ value: T?, precision: UInt = 0) -> String where T: BinaryInteger, T: CVarArg {
-        guard let value = value else { return "" }
+        guard let value else { return "" }
         if precision > 0 {
             return format(Float(value), precision: precision)
-        } else {
-            return String(value)
         }
+        return String(value)
     }
 }

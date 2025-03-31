@@ -4,7 +4,7 @@ let zulu = TimeZone(secondsFromGMT: 0)!
 
 extension Sequence where Element: Hashable {
     var frequency: [Element: Int] { reduce(into: [:]) { $0[$1, default: 0] += 1 } }
-    
+
     var mode: (values: [Element], count: Int)? {
         guard let maxCount = frequency.values.max() else { return nil }
         return (frequency.compactMap { $0.value == maxCount ? $0.key : nil }, maxCount)
