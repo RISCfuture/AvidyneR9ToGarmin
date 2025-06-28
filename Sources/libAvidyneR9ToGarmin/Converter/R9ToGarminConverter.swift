@@ -43,7 +43,8 @@ public actor R9ToGarminConverter {
                 return
             }
 
-            for case let fileURL as URL in fileEnumerator {
+            let allURLs = fileEnumerator.compactMap { $0 as? URL }
+            for fileURL in allURLs {
                 guard let resourceValues = try? fileURL.resourceValues(forKeys: [.nameKey, .isDirectoryKey]),
                       let isDirectory = resourceValues.isDirectory,
                       let name = resourceValues.name
