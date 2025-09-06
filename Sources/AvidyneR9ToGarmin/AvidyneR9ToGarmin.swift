@@ -5,6 +5,7 @@ import Logging
 
 @main
 struct AvidyneR9ToGarmin: AsyncParsableCommand {
+    
     static let configuration = CommandConfiguration(
         abstract: "Converts Avidyne R9 log files to Garmin CSV format, for use with websites that expect logs in Garmin format.",
         discussion: """
@@ -34,12 +35,27 @@ struct AvidyneR9ToGarmin: AsyncParsableCommand {
 
         let converter = R9ToGarminConverter()
         await converter.setLogger(logger)
+        
+        let progressActor = ProgressActor(verbose: verbose)
+        if !verbose {
+            // Show the progress bar immediately
+            await progressActor.update(progress: 0.0, message: "Starting...")
+            
+            await converter.setProgressReporter { @Sendable progress, message in
+                Task { await progressActor.update(progress: progress, message: message) }
+            }
+        }
 
         do {
             await converter.parseR9Records(from: input)
             try await converter.writeGarminRecords(to: output)
+
+            if !verbose {
+                await progressActor.finish()
+            }
         } catch {
             logger.critical("\(error.localizedDescription)")
         }
     }
 }
+

@@ -17,7 +17,8 @@ let package = Package(
         .package(url: "https://github.com/dehesa/CodableCSV.git", from: "0.6.7"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.1"),
-        .package(url: "https://github.com/nicklockwood/VectorMath.git", branch: "master")
+        .package(url: "https://github.com/nicklockwood/VectorMath.git", branch: "master"),
+        .package(url: "https://github.com/jkandzi/Progress.swift.git", from: "0.4.0")
     ],
     targets: [
         // Targets are the basic building blocks of a package. A target can define a module or a test suite.
@@ -34,7 +35,8 @@ let package = Package(
             dependencies: [
                 .target(name: "libAvidyneR9ToGarmin"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
-                .product(name: "Logging", package: "swift-log")
+                .product(name: "Logging", package: "swift-log"),
+                .product(name: "Progress", package: "Progress.swift")
             ]),
         .testTarget(
             name: "AvidyneR9ToGarminTests",

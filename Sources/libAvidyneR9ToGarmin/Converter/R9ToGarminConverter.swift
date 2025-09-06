@@ -25,16 +25,42 @@ public actor R9ToGarminConverter {
 
     /// The logger instance.
     public var logger: Logger?
+    
+    /// Progress reporter for external monitoring
+    public var progressReporter: (@Sendable (Float, String) -> Void)?
 
     /// Creates a new record.
     public init() {}
 
     /// Sets the logger instance.
     public func setLogger(_ logger: Logger?) { self.logger = logger }
+    
+    /// Sets the progress reporter.
+    public func setProgressReporter(_ reporter: @escaping @Sendable (Float, String) -> Void) {
+        self.progressReporter = reporter
+    }
 
     /// Finds and parses R9 records recursively within the given URL.
     public func parseR9Records(from url: URL) async {
         await inRecords.setLogger(logger)
+        
+        progressReporter?(0.0, "Scanning for R9 files...")
+        
+        // Start a progress monitoring task
+        let monitorTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+                
+                let processed = await self.inRecords.processedFiles
+                let total = await self.inRecords.totalFiles
+                
+                if total > 0 {
+                    let progress = await self.inRecords.fractionComplete ?? 0
+                    let displayProgress = progress * 0.45 + 0.05
+                    self.progressReporter?(displayProgress, "Processing R9 files: \(processed)/\(total)")
+                }
+            }
+        }
 
         await withDiscardingTaskGroup { group in
             guard let fileEnumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.nameKey, .isDirectoryKey]) else {
@@ -42,9 +68,21 @@ public actor R9ToGarminConverter {
                                   metadata: ["path": .string(url.path)])
                 return
             }
-
-            let allURLs = fileEnumerator.compactMap { $0 as? URL }
-            for fileURL in allURLs {
+            
+            var csvCount = 0
+            var totalCount = 0
+            
+            // Process files as we enumerate them, don't collect all URLs first
+            while let fileURL = fileEnumerator.nextObject() as? URL {
+                totalCount += 1
+                
+                // Update more frequently during scanning - every 50 files
+                if totalCount % 50 == 0 {
+                    // Show scanning progress (1-5% of total progress bar)
+                    let scanProgress = min(0.04, Float(totalCount) / 20000.0) + 0.01
+                    progressReporter?(scanProgress, "Scanning: checked \(totalCount) items, found \(csvCount) CSV files...")
+                }
+                
                 guard let resourceValues = try? fileURL.resourceValues(forKeys: [.nameKey, .isDirectoryKey]),
                       let isDirectory = resourceValues.isDirectory,
                       let name = resourceValues.name
@@ -53,14 +91,30 @@ public actor R9ToGarminConverter {
                 guard !isDirectory else { continue }
                 guard name.hasSuffix(".CSV") else { continue }
 
+                csvCount += 1
                 group.addTask { await self.inRecords.process(url: fileURL) }
+                
+                // Also update after finding CSV files
+                if csvCount % 50 == 0 {
+                    progressReporter?(min(0.05, Float(csvCount) / 5000.0), "Found \(csvCount) CSV files...")
+                }
             }
+            progressReporter?(0.05, "Starting to process \(csvCount) CSV files...")
         }
+        
+        // Cancel the monitoring task
+        monitorTask.cancel()
+        
+        let processed = await self.inRecords.processedFiles
+        let total = await self.inRecords.totalFiles
+        progressReporter?(0.5, "Processed \(processed)/\(total) R9 files")
     }
 
     /// Writes Garmin records to the given outut directory.
     public func writeGarminRecords(to url: URL) async throws {
         guard url.isDirectory else { throw AvidyneR9ToGarminError.urlNotDirectory(url) }
+        
+        progressReporter?(0.0, "Converting to Garmin format...")
 
         var writer: CSVWriter?
         var rowsRecorded = 0
@@ -70,9 +124,18 @@ public actor R9ToGarminConverter {
         for try await record in await generateGarminRecords() {
             records.append(record)
         }
+        progressReporter?(0.5, "Sorting \(records.count) records...")
         records.sort { $0 < $1 }
+        
+        progressReporter?(0.6, "Writing Garmin CSV files...")
 
-        for record in records {
+        let totalRecords = records.count
+        for (index, record) in records.enumerated() {
+            if index % 100 == 0 {
+                let progress = 0.6 + (Float(index) / Float(totalRecords)) * 0.4
+                progressReporter?(progress, "Writing record \(index + 1)/\(totalRecords)...")
+            }
+            
             switch record {
                 case let .record(record):
                     if writer == nil { (writer, CSVFile) = try startNewFile(date: record.date, directory: url) }
@@ -88,6 +151,8 @@ public actor R9ToGarminConverter {
                     rowsRecorded = 0
             }
         }
+        
+        progressReporter?(1.0, "Conversion complete!")
     }
 
     private func startNewFile(date: Date, directory: URL) throws -> (CSVWriter, URL) {
