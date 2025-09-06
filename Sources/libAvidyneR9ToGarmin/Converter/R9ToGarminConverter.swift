@@ -181,9 +181,11 @@ public actor R9ToGarminConverter {
     }
 
     private func generateGarminRecords() async -> any AsyncSequence<SortedRecord, Error> {
-        await inRecords.dates().map { date, records, newFile in
+        await inRecords.dates().compactMap { date, records, newFile in
             if newFile { return .newFile(date: date) }
-            let record = try await self.r9RecordsToGarminRecord(records, date: date)
+            guard let record = try await self.r9RecordsToGarminRecord(records, date: date) else {
+                return nil
+            }
             return SortedRecord.record(record)
         }
     }

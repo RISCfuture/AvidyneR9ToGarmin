@@ -9,10 +9,12 @@ extension R9ToGarminConverter {
     private static let autopilotLateralModes: [String?] = [nil, "ROLL", "HDG", "LOC", "LOC-BC", "VOR", "VOR-APPR", "APPR", "NAV", "NAV-INTCPT"]
     private static let autopilotVerticalModes: [String?] = [nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, "PITCH", "IAS", "VS", "ALT", "GS", "ALT-GS", "VNAV-ALT", "VNAV-VS"]
 
-    func r9RecordsToGarminRecord(_ r9Records: [R9Record], date: Date) async throws -> GarminRecord {
-        let (engineRecord, flightRecord, systemRecord) = try recordCombiners(from: r9Records, date: date),
-
-        baroAltitude = await zipOptionals(systemRecord.get(\.altimeterSetting), flightRecord.get(\.pressureAltitude))
+    func r9RecordsToGarminRecord(_ r9Records: [R9Record], date: Date) async throws -> GarminRecord? {
+        guard let (engineRecord, flightRecord, systemRecord) = try recordCombiners(from: r9Records, date: date) else {
+            return nil
+        }
+        
+        let baroAltitude = await zipOptionals(systemRecord.get(\.altimeterSetting), flightRecord.get(\.pressureAltitude))
             .map { altimeterSetting, pressureAltitude in
                 pressureAltitude + Int(((altimeterSetting - 29.92) * 1000).rounded()) // TODO is this good enough?
             },
@@ -148,17 +150,26 @@ extension R9ToGarminConverter {
                      percentPower: percentPower)
     }
 
-    private func recordCombiners(from records: [R9Record], date: Date) throws -> (R9RecordCombiner<R9EngineRecord>, R9RecordCombiner<R9FlightRecord>, R9RecordCombiner<R9SystemRecord>) {
+    private func recordCombiners(from records: [R9Record], date: Date) throws -> (R9RecordCombiner<R9EngineRecord>, R9RecordCombiner<R9FlightRecord>, R9RecordCombiner<R9SystemRecord>)? {
         let engineRecords: [R9EngineRecord] = records.filter { $0.type == .engine } as! [R9EngineRecord]
-        guard !engineRecords.isEmpty else { throw AvidyneR9ToGarminError.incompleteRecordsForDate(date) }
+        guard !engineRecords.isEmpty else { 
+            logger?.warning("Incomplete R9 entries for time \(date.ISO8601Format()): missing engine records")
+            return nil 
+        }
         let engineCombiner = R9RecordCombiner(records: engineRecords)
 
         let flightRecords: [R9FlightRecord] = records.filter { $0.type == .flight } as! [R9FlightRecord]
-        guard !flightRecords.isEmpty else { throw AvidyneR9ToGarminError.incompleteRecordsForDate(date) }
+        guard !flightRecords.isEmpty else { 
+            logger?.warning("Incomplete R9 entries for time \(date.ISO8601Format()): missing flight records")
+            return nil 
+        }
         let flightCombiner = R9RecordCombiner(records: flightRecords)
 
         let systemRecords: [R9SystemRecord] = records.filter { $0.type == .system } as! [R9SystemRecord]
-        guard !systemRecords.isEmpty else { throw AvidyneR9ToGarminError.incompleteRecordsForDate(date) }
+        guard !systemRecords.isEmpty else { 
+            logger?.warning("Incomplete R9 entries for time \(date.ISO8601Format()): missing system records")
+            return nil 
+        }
         let systemCombiner = R9RecordCombiner(records: systemRecords)
 
         return (engineCombiner, flightCombiner, systemCombiner)
