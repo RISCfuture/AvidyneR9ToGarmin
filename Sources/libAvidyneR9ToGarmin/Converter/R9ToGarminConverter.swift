@@ -28,6 +28,7 @@ public actor R9ToGarminConverter {
 
     /// Progress reporter for external monitoring
     public var progressReporter: (@Sendable (Float, String) -> Void)?
+    public var progressManager: ProgressManager?
 
     /// Memory usage statistics
     public struct MemoryStats: Sendable {
@@ -49,6 +50,11 @@ public actor R9ToGarminConverter {
         self.progressReporter = reporter
     }
 
+    /// Sets the progress manager for detailed tracking.
+    public func setProgressManager(_ manager: ProgressManager) {
+        self.progressManager = manager
+    }
+
     /// Gets memory statistics from the last conversion
     public func getMemoryStats() -> MemoryStats { stats }
 
@@ -61,8 +67,9 @@ public actor R9ToGarminConverter {
         }
 
         // Phase 1: Scan for flight boundaries
-        progressReporter?(0.0, "Phase 1: Scanning for flight boundaries...")
-        let scanner = R9FlightBoundaryScanner(logger: logger)
+        progressReporter?(0.0, "Phase 1: Scanning for flight boundaries…")
+        await progressManager?.startPhase1(totalFiles: 0) // Will be updated by scanner
+        let scanner = R9FlightBoundaryScanner(logger: logger, progressManager: progressManager)
         let phase1Start = Date()
         let scanResult = try await scanner.scanForFlightBoundaries(in: inputDirectory)
         let phase1Memory = getMemoryUsage()
@@ -76,9 +83,12 @@ public actor R9ToGarminConverter {
         ])
 
         progressReporter?(0.3, "Found \(scanResult.boundaries.count) flights in \(scanResult.scannedFiles) files")
+        await progressManager?.completePhase1(flightsFound: scanResult.boundaries.count, powerOnEvents: scanResult.boundaries.count)
 
         // Phase 2: Stream and convert records
-        progressReporter?(0.35, "Phase 2: Converting records...")
+        progressReporter?(0.35, "Phase 2: Converting records…")
+        let csvFiles = findCSVFiles(in: inputDirectory)
+        await progressManager?.startPhase2(totalFiles: csvFiles.count)
         let phase2Start = Date()
         try await streamAndConvertRecords(
             from: inputDirectory,
@@ -112,14 +122,16 @@ public actor R9ToGarminConverter {
     ) async throws {
         // Find all CSV files
         let csvFiles = findCSVFiles(in: inputDirectory)
-        let totalFiles = csvFiles.count
 
         // Create record combiner with time window
         let combiner = StreamingRecordCombiner(timeWindow: Self.timeWindowSize, logger: logger)
 
+        // Track completed files
+        var filesCompleted = 0
+
         // Process files concurrently and add to combiner
         await withTaskGroup(of: Void.self) { group in
-            for (fileIndex, url) in csvFiles.enumerated() {
+            for url in csvFiles {
                 group.addTask { [logger] in
                     do {
                         guard let parser = try R9FileParser(url: url, logger: logger) else { return }
@@ -138,10 +150,6 @@ public actor R9ToGarminConverter {
                                 break // Already handled in Phase 1
                             }
                         }
-
-                        // Update progress
-                        let progress = 0.35 + (Float(fileIndex + 1) / Float(totalFiles)) * 0.45
-                        await self.progressReporter?(progress, "Processing file \(fileIndex + 1)/\(totalFiles)")
                     } catch {
                         logger?.warning("Failed to parse file", metadata: [
                             "file": .string(url.path),
@@ -149,6 +157,12 @@ public actor R9ToGarminConverter {
                         ])
                     }
                 }
+            }
+
+            // Update progress as files complete
+            for await _ in group {
+                filesCompleted += 1
+                await progressManager?.updatePhase2FileProgress(fileIndex: filesCompleted - 1, fileName: "")
             }
         }
 
@@ -163,13 +177,27 @@ public actor R9ToGarminConverter {
         await combiner.finishProcessing()
 
         let allRecords = await combiner.getCombinedRecords()
-        logger?.info("Processing combined records...")
+        logger?.info("Processing combined records…")
+
+        // Get total record count for progress tracking
+        let totalRecordCount = await combiner.getBufferCount()
+
+        // Start the combining/writing phase
+        await progressManager?.startCombiningRecords(totalRecords: totalRecordCount)
 
         var currentBoundary: FlightBoundary? = boundaries.first
         var nextBoundary: FlightBoundary? = boundaries.count > 1 ? boundaries[1] : nil
 
+        var filesWritten = 0
+        var writingStarted = false
+
         for await (date, bundle) in allRecords {
             totalRecordsProcessed += 1
+
+            // Update combining progress
+            if !writingStarted {
+                await progressManager?.updateRecordProgress(processed: totalRecordsProcessed, written: 0)
+            }
 
             // Check if we need to move to next boundary
             while nextBoundary != nil && date >= nextBoundary!.startTime {
@@ -179,6 +207,8 @@ public actor R9ToGarminConverter {
                     try? FileManager.default.removeItem(at: oldFile)
                 } else if recordsWritten > 0 {
                     logger?.info("Completed file with \(recordsWritten) records")
+                    filesWritten += 1
+                    await progressManager?.updateWritingProgress(filesWritten: filesWritten)
                 }
 
                 // Move to next boundary
@@ -196,6 +226,12 @@ public actor R9ToGarminConverter {
 
             // Start new file if needed
             if currentWriter == nil {
+                // Start writing phase when we begin the first file
+                if !writingStarted {
+                    writingStarted = true
+                    await progressManager?.startWritingFiles(totalBoundaries: boundaries.count)
+                }
+
                 let result = try await startNewFile(date: boundary.startTime, directory: outputDirectory)
                 currentWriter = result.0
                 currentOutputFile = result.1
@@ -218,7 +254,14 @@ public actor R9ToGarminConverter {
         if let oldFile = currentOutputFile, recordsWritten == 0 {
             logger?.debug("Removing empty file: \(oldFile.lastPathComponent)")
             try? FileManager.default.removeItem(at: oldFile)
+        } else if recordsWritten > 0 {
+            // Count the last file
+            filesWritten += 1
+            await progressManager?.updateWritingProgress(filesWritten: filesWritten)
         }
+
+        // Final progress update
+        await progressManager?.completeConversion()
 
         logger?.info("Phase 2 complete: processed \(totalRecordsProcessed) records, wrote \(recordsWritten) records")
     }
@@ -575,6 +618,10 @@ actor StreamingRecordCombiner {
         // Flush all remaining records
         // This will be called after all files are processed
         logger?.info("StreamingRecordCombiner finished: totalAdded=\(totalRecordsAdded), withoutDates=\(recordsWithoutDates), buffered=\(buffer.count)")
+    }
+
+    func getBufferCount() -> Int {
+        return buffer.count
     }
 
     func getCombinedRecords() -> AsyncStream<(Date, RecordBundle)> {

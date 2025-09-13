@@ -10,10 +10,12 @@ public struct FlightBoundary: Sendable {
 
 public actor R9FlightBoundaryScanner {
     private let logger: Logger?
+    private let progressManager: ProgressManager?
     private let timeWindow: TimeInterval = 30.0 // 30 seconds to group PFD/MFD power-ons
 
-    public init(logger: Logger? = nil) {
+    public init(logger: Logger? = nil, progressManager: ProgressManager? = nil) {
         self.logger = logger
+        self.progressManager = progressManager
     }
 
     public struct ScanResult: Sendable {
@@ -32,6 +34,7 @@ public actor R9FlightBoundaryScanner {
         totalFiles = csvFiles.count
 
         logger?.info("Starting Phase 1: Scanning \(totalFiles) CSV files for flight boundaries")
+        await progressManager?.startPhase1(totalFiles: totalFiles)
 
         // Process files concurrently to find POWER ON markers
         await withTaskGroup(of: [(Date, String)]?.self) { group in
@@ -46,11 +49,14 @@ public actor R9FlightBoundaryScanner {
                 }
             }
 
-            // Collect results
+            // Collect results and update progress
             for await result in group {
+                scannedFiles += 1
+                // Update progress as each file completes
+                await progressManager?.updatePhase1Progress(filesScanned: scannedFiles)
+
                 if let events = result {
                     powerOnEvents.append(contentsOf: events)
-                    scannedFiles += 1
                 }
             }
         }
@@ -62,6 +68,7 @@ public actor R9FlightBoundaryScanner {
         let boundaries = groupIntoFlightBoundaries(powerOnEvents)
 
         logger?.info("Phase 1 complete: Found \(boundaries.count) flights from \(powerOnEvents.count) power-on events")
+        await progressManager?.completePhase1(flightsFound: boundaries.count, powerOnEvents: powerOnEvents.count)
 
         return ScanResult(
             boundaries: boundaries,

@@ -13,11 +13,6 @@ struct AvidyneR9ToGarmin: AsyncParsableCommand {
             system. Empty log files will automatically be deleted; however, a "long tail" of
             trivially small log files will still be present. You can, at your discretion,
             delete these irrelevant smaller log files.
-
-            This version uses StreamingCSV with a two-phase approach for improved performance
-            and memory efficiency:
-            - Phase 1: Scans for flight boundaries (POWER ON markers)
-            - Phase 2: Streams and converts records with constant memory usage
             """
     )
 
@@ -44,14 +39,13 @@ struct AvidyneR9ToGarmin: AsyncParsableCommand {
         let converter = R9ToGarminConverter()
         await converter.setLogger(logger)
 
+        // Set up enhanced progress tracking
         let progressActor = ProgressActor(verbose: verbose)
-        if !verbose {
-            await progressActor.update(progress: 0.0, message: "Starting...")
 
-            await converter.setProgressReporter { @Sendable progress, message in
-                Task { await progressActor.update(progress: progress, message: message) }
-            }
-        }
+        // The ProgressActor creates its own ProgressManager internally
+        // We need to get a reference to it and pass it to the converter
+        let progressManager = await progressActor.getProgressManager()
+        await converter.setProgressManager(progressManager)
 
         do {
             let startTime = Date()
