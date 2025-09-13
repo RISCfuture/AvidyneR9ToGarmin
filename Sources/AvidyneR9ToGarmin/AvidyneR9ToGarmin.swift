@@ -5,7 +5,7 @@ import Logging
 
 @main
 struct AvidyneR9ToGarmin: AsyncParsableCommand {
-    
+
     static let configuration = CommandConfiguration(
         abstract: "Converts Avidyne R9 log files to Garmin CSV format, for use with websites that expect logs in Garmin format.",
         discussion: """
@@ -13,6 +13,11 @@ struct AvidyneR9ToGarmin: AsyncParsableCommand {
             system. Empty log files will automatically be deleted; however, a "long tail" of
             trivially small log files will still be present. You can, at your discretion,
             delete these irrelevant smaller log files.
+
+            This version uses StreamingCSV with a two-phase approach for improved performance
+            and memory efficiency:
+            - Phase 1: Scans for flight boundaries (POWER ON markers)
+            - Phase 2: Streams and converts records with constant memory usage
             """
     )
 
@@ -29,33 +34,47 @@ struct AvidyneR9ToGarmin: AsyncParsableCommand {
     @Flag(help: "Include extra information in the output.")
     var verbose = false
 
+    @Flag(help: "Show memory usage statistics after conversion.")
+    var showStats = false
+
     mutating func run() async throws {
         var logger = Logger(label: "codes.tim.R9ToGarminConverter")
         logger.logLevel = verbose ? .info : .warning
 
         let converter = R9ToGarminConverter()
         await converter.setLogger(logger)
-        
+
         let progressActor = ProgressActor(verbose: verbose)
         if !verbose {
-            // Show the progress bar immediately
             await progressActor.update(progress: 0.0, message: "Starting...")
-            
+
             await converter.setProgressReporter { @Sendable progress, message in
                 Task { await progressActor.update(progress: progress, message: message) }
             }
         }
 
         do {
-            await converter.parseR9Records(from: input)
-            try await converter.writeGarminRecords(to: output)
+            let startTime = Date()
+            try await converter.convert(from: input, to: output)
+            let endTime = Date()
 
             if !verbose {
                 await progressActor.finish()
             }
+
+            if showStats || verbose {
+                let stats = await converter.getMemoryStats()
+                let totalTime = endTime.timeIntervalSince(startTime)
+
+                print("\n=== Performance Statistics ===")
+                print("Total Processing Time: \(String(format: "%.2f", totalTime)) seconds")
+                print("Phase 1 Memory Usage: \(String(format: "%.2f", stats.phase1MemoryMB)) MB")
+                print("Phase 2 Peak Memory: \(String(format: "%.2f", stats.phase2PeakMemoryMB)) MB")
+                print("==============================\n")
+            }
         } catch {
             logger.critical("\(error.localizedDescription)")
+            throw ExitCode.failure
         }
     }
 }
-

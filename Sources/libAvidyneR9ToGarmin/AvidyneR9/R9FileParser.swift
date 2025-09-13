@@ -1,60 +1,24 @@
-@preconcurrency import CodableCSV
 import Foundation
 import Logging
+import StreamingCSV
 
-let powerOnSentinel = "<<<< **** POWER ON **** >>>>"
-let incrementalExtractSentinel = "<< Incremental extract >>"
-
-enum R9LogEntry: Sendable {
-    case record(_ record: R9Record)
+public enum R9LogEntry: Sendable {
+    case engineRow(_ row: R9EngineRow)
+    case engineLegacyRow(_ row: R9EngineLegacyRow)
+    case flightRow(_ row: R9FlightRow)
+    case systemRow(_ row: R9SystemRow)
     case powerOn(date: Date)
     case incrementalExtract(date: Date)
 }
 
-actor R9FileParser {
-    private static let engineFields: [String: [String]] = [
-        "oilTemperature": ["Eng1 Oil Temperature", "Eng1OilTemperature(°F)"],
-        "oilPressure": ["Eng1 Oil Pressure", "Eng1OilPressure"],
-        "RPM": ["Eng1 RPM", "Eng1RPM"],
-        "manifoldPressure": ["Eng1 Manifold Pressure (In.Hg)", "Eng1ManifoldPressure(In.Hg)"],
-        //        "TIT": ["Eng1 TIT (°F)", "Eng1TIT(°F)"],
-        "CHTs": ["Eng1 CHT[#] (°F)", "Eng1CHT[#](°F)"],
-        "EGTs": ["Eng1 EGT[#] (°F)", "Eng1EGT[#](°F)"],
-        "percentPower": ["Eng1 Percent Pwr", "Eng1PercentPwr"],
-        "fuelFlow": ["FuelFlow", "FuelFlow(Gal/hr)"],
-        "fuelUsed": ["FuelUsed", "FuelUsed(Gal)"],
-        "fuelRemaining": ["FuelRemaining", "FuelRemaining(Gal)"],
-        "fuelTimeRemaining": ["FuelTimeRemaining (min)", "FuelTimeRemaining(min)"],
-        "fuelEconomy": ["FuelEconomy", "FuelEconomy(nm/gal)"],
-        //        "_alt1Current": ["Eng1 Alt1 current (A)", "Eng1Alt1current(A)"],
-        //        "_alt2Current": ["Eng1 Alt2 current (A)", "Eng1Alt2current(A)"],
-        //        "_bat1Current": ["Eng1 Bat current (A)", "Eng1Batcurrent(A)"],
-        //        "_bat2Current": ["Eng1 Bat2 current (A)", "Eng1Bat2current(A)"],
-        "mainBus1Potential": ["Eng1 MBus1 Volts", "Eng1Bus1Volts"],
-        //        "_mainBus2Potential": ["Eng1 MBus2 Volts", "Eng1Bus2Volts"],
-        "emergencyBusPotential": ["Eng1 Bus2 Volts", "Eng1Bus3Volts"]
-        //        "_fuelQuantityLeft": ["L Fuel Qty"],
-        //        "_fuelQuantityRight": ["R Fuel Qty"],
-        //        "_deiceVacuum": ["DeiceVac (in-hg)"],
-        //        "_rudderTrim": ["Rudder Trim (deg)"],
-        //        "_flapSetting": ["Flaps (deg)"],
-        //        "_Ng": ["Ng (%)"],
-        //        "_torque": ["Torque(ft-lbs)"],
-        //        "_ITT": ["ITT (°C)"],
-        //        "_Np": ["Np (rpm)"],
-        //        "_discreteInputs": ["Eng1 Discrete Inputs", "Eng1DiscreteInputs"],
-        //        "_discreteOutputs": ["Eng1 Discrete Outputs", "Eng1DiscreteOutputs"]
-    ]
-
+public actor R9FileParser {
     let url: URL
     let type: R9RecordType
     var logger: Logger?
 
     private var path: String { url.path }
 
-    private var engineFields: [String: String] = [:]
-
-    init?(url: URL, logger: Logger? = nil) throws {
+    public init?(url: URL, logger: Logger? = nil) throws {
         self.url = url
         self.logger = logger
 
@@ -68,242 +32,360 @@ actor R9FileParser {
         }
     }
 
-    func parse() throws -> AsyncStream<R9LogEntry> {
-        let string = try CSVString(url: url)
-        let reader = try CSVReader(input: string) { config in
-            config.headerStrategy = .firstLine
-            config.delimiters.row = .standard
-            config.trimStrategy = .whitespaces
-        }
-
-        return AsyncStream { continuation in
+    public func parse() throws -> AsyncThrowingStream<R9LogEntry, Error> {
+        return AsyncThrowingStream { continuation in
             Task {
                 do {
-                    while let row = try reader.readRecord() {
-                        do {
-                            let record = try await parseRow(row, headers: reader.headers)
-                            continuation.yield(record)
-                        } catch {
-                            let index = reader.rowIndex - 1
-                            logger?.info("Couldn’t parse row",
-                                         metadata: metadataForError(error, rowIndex: index))
+                    let reader = try StreamingCSVReader(url: url, encoding: .windowsCP1252)
+
+                    // Read header row
+                    guard let headers = try await reader.readRow() else {
+                        continuation.finish()
+                        return
+                    }
+
+                    // Process data rows
+                    while let row = try await reader.readRow() {
+                        if let entry = try parseRow(row, headers: headers) {
+                            continuation.yield(entry)
                         }
                     }
                 } catch {
-                    logger?.error("Couldn’t parse rows",
-                                  metadata: metadataForError(error))
+                    continuation.finish(throwing: error)
+                    return
                 }
                 continuation.finish()
             }
         }
     }
 
-    private func CSVString(url: URL) throws -> String {
-        let csv = try String(contentsOf: url, encoding: .windowsCP1250)
-        let columns = csv.split(separator: "\r\n").first!.split(separator: ",", omittingEmptySubsequences: false).count
-        return csv
-            .replacingOccurrences(of: powerOnSentinel, with: powerOnSentinel.appending(String(repeating: ",", count: columns - 4)))
-            .replacingOccurrences(of: incrementalExtractSentinel, with: "")
-    }
+    private func parseRow(_ row: [String], headers: [String]) throws -> R9LogEntry? {
+        // Check for special rows first
+        if row.count > 3 {
+            if row[3] == powerOnSentinel || (!row.isEmpty && row[0] == powerOnSentinel) {
+                if let date = parseDateFromRow(row) {
+                    return .powerOn(date: date)
+                }
+            }
+            if row[3] == incrementalExtractSentinel || (!row.isEmpty && row[0] == incrementalExtractSentinel) {
+                if let date = parseDateFromRow(row) {
+                    return .incrementalExtract(date: date)
+                }
+            }
+        }
 
-    private func parseRow(_ row: CSVReader.Record, headers: [String]) async throws -> R9LogEntry {
-        let record: R9LogEntry
+        // Create dictionary for field access
+        var fields: [String: String] = [:]
+        for (index, header) in headers.enumerated() {
+            if index < row.count {
+                fields[header] = row[index]
+            }
+        }
+
+        // Skip empty rows
+        if fields["Systime"] == nil || fields["Systime"] == "-" || fields["Systime"]?.isEmpty == true {
+            return nil
+        }
+
         switch type {
-            case .engine:
-                try determineEngineFields(header: headers)
-                record = try await parseEngineRecord(row: row)
-            case .flight: record = try await parseFlightRecord(row: row)
-            case .system: record = try await parseSystemRecord(row: row)
-        }
-        return record
-    }
-
-    private func metadataForError(_ error: Error, rowIndex: Int? = nil) -> Logger.Metadata {
-        var metadata: Logger.Metadata = [
-            "error": .string(error.localizedDescription),
-            "path": .string(path)
-        ]
-
-        if let rowIndex {
-            metadata["line"] = .string(String(rowIndex))
-        }
-
-        if let error = error as? AvidyneR9ToGarminError {
-            switch error {
-                case let .invalidValue(field, value):
-                    metadata["field"] = .string(field)
-                    metadata["value"] = .string(value)
-                case let .invalidRow(row, childError):
-                    metadata = metadataForError(childError)
-                    metadata["row"] = .string(String(row))
-                default: break
+        case .engine:
+            // Determine if this is legacy format
+            let isLegacy = headers.contains("Eng1OilTemperature(°F)")
+            if isLegacy {
+                return parseEngineLegacyRow(fields: fields)
             }
+            return parseEngineRow(fields: fields)
+        case .flight:
+            return parseFlightRow(fields: fields)
+        case .system:
+            return parseSystemRow(fields: fields)
+        }
+    }
+
+    private func parseEngineRow(fields: [String: String]) -> R9LogEntry? {
+        var row = R9EngineRow()
+
+        row.Systime = parseUInt(fields["Systime"])
+        row.Date = fields["Date"]
+        row.Time = fields["Time"]
+
+        row.oilTemperature = parseInt(fields["Eng1 Oil Temperature"])
+        row.oilPressure = parseUInt(fields["Eng1 Oil Pressure"])
+        row.RPM = parseUInt(fields["Eng1 RPM"])
+        row.manifoldPressure = parseFloat(fields["Eng1 Manifold Pressure (In.Hg)"])
+        row.TIT = parseFloat(fields["Eng1 TIT (°F)"])
+
+        row.CHT1 = parseFloat(fields["Eng1 CHT[1] (°F)"])
+        row.CHT2 = parseFloat(fields["Eng1 CHT[2] (°F)"])
+        row.CHT3 = parseFloat(fields["Eng1 CHT[3] (°F)"])
+        row.CHT4 = parseFloat(fields["Eng1 CHT[4] (°F)"])
+        row.CHT5 = parseFloat(fields["Eng1 CHT[5] (°F)"])
+        row.CHT6 = parseFloat(fields["Eng1 CHT[6] (°F)"])
+
+        row.EGT1 = parseFloat(fields["Eng1 EGT[1] (°F)"])
+        row.EGT2 = parseFloat(fields["Eng1 EGT[2] (°F)"])
+        row.EGT3 = parseFloat(fields["Eng1 EGT[3] (°F)"])
+        row.EGT4 = parseFloat(fields["Eng1 EGT[4] (°F)"])
+        row.EGT5 = parseFloat(fields["Eng1 EGT[5] (°F)"])
+        row.EGT6 = parseFloat(fields["Eng1 EGT[6] (°F)"])
+
+        row.percentPower = parseFloat(fields["Eng1 Percent Pwr"])
+        row.fuelFlow = parseFloat(fields["FuelFlow"])
+        row.fuelUsed = parseFloat(fields["FuelUsed"])
+        row.fuelRemaining = parseFloat(fields["FuelRemaining"])
+        row.fuelTimeRemaining = parseInt(fields["FuelTimeRemaining (min)"])
+        row.fuelEconomy = parseFloat(fields["FuelEconomy"])
+
+        row.mainBus1Potential = parseFloat(fields["Eng1 MBus1 Volts"])
+        row.emergencyBusPotential = parseFloat(fields["Eng1 Bus2 Volts"])
+
+        // Only return if we have a valid date
+        guard row.Date != nil && row.Time != nil else { return nil }
+        return .engineRow(row)
+    }
+
+    private func parseEngineLegacyRow(fields: [String: String]) -> R9LogEntry? {
+        var row = R9EngineLegacyRow()
+
+        row.Systime = parseUInt(fields["Systime"])
+        row.Date = fields["Date"]
+        row.Time = fields["Time"]
+
+        row.oilTemperature = parseInt(fields["Eng1OilTemperature(°F)"])
+        row.oilPressure = parseUInt(fields["Eng1OilPressure"])
+        row.RPM = parseUInt(fields["Eng1RPM"])
+        row.manifoldPressure = parseFloat(fields["Eng1ManifoldPressure(In.Hg)"])
+        row.TIT = parseFloat(fields["Eng1TIT(°F)"])
+
+        row.CHT1 = parseFloat(fields["Eng1CHT[1](°F)"])
+        row.CHT2 = parseFloat(fields["Eng1CHT[2](°F)"])
+        row.CHT3 = parseFloat(fields["Eng1CHT[3](°F)"])
+        row.CHT4 = parseFloat(fields["Eng1CHT[4](°F)"])
+        row.CHT5 = parseFloat(fields["Eng1CHT[5](°F)"])
+        row.CHT6 = parseFloat(fields["Eng1CHT[6](°F)"])
+
+        row.EGT1 = parseFloat(fields["Eng1EGT[1](°F)"])
+        row.EGT2 = parseFloat(fields["Eng1EGT[2](°F)"])
+        row.EGT3 = parseFloat(fields["Eng1EGT[3](°F)"])
+        row.EGT4 = parseFloat(fields["Eng1EGT[4](°F)"])
+        row.EGT5 = parseFloat(fields["Eng1EGT[5](°F)"])
+        row.EGT6 = parseFloat(fields["Eng1EGT[6](°F)"])
+
+        row.percentPower = parseFloat(fields["Eng1PercentPwr"])
+        row.fuelFlow = parseFloat(fields["FuelFlow(Gal/hr)"])
+        row.fuelUsed = parseFloat(fields["FuelUsed(Gal)"])
+        row.fuelRemaining = parseFloat(fields["FuelRemaining(Gal)"])
+        row.fuelTimeRemaining = parseInt(fields["FuelTimeRemaining(min)"])
+        row.fuelEconomy = parseFloat(fields["FuelEconomy(nm/gal)"])
+
+        row.mainBus1Potential = parseFloat(fields["Eng1Bus1Volts"])
+        row.emergencyBusPotential = parseFloat(fields["Eng1Bus3Volts"])
+
+        // Only return if we have a valid date
+        guard row.Date != nil && row.Time != nil else { return nil }
+        return .engineLegacyRow(row)
+    }
+
+    private func parseFlightRow(fields: [String: String]) -> R9LogEntry? {
+        var row = R9FlightRow()
+
+        row.Systime = parseUInt(fields["Systime"])
+        row.Date = fields["Date"]
+        row.Time = fields["Time"]
+
+        row.filteredNormalAcceleration = parseFloat(fields["Filtered NormAcc (G)"])
+        row.normalAcceleration = parseFloat(fields["NormAcc (G)"])
+        row.longitudinalAcceleration = parseFloat(fields["LongAcc (G)"])
+        row.lateralAcceleration = parseFloat(fields["LateralAcc (G)"])
+        row.activeADAHRS = parseUInt8(fields["ADAHRSUsed"])
+        row.AHRSStatus = parseUInt8Hex(fields["AHRSStatusbits"])
+        row.heading = parseFloat(fields["Heading (°M)"])
+        row.pitch = parseFloat(fields["Pitch (°)"])
+        row.roll = parseFloat(fields["Roll (°)"])
+        row.FDPitch = parseFloat(fields["FlightDirectorPitch (°)"])
+        row.FDRoll = parseFloat(fields["FlightDirectorRoll (°)"])
+        row.headingRate = parseFloat(fields["HeadingRate (°/sec)"])
+        row.pressureAltitude = parseInt(fields["PressureAltitude (ft)"])
+        row.indicatedAirspeed = parseUInt(fields["IndicatedAirspeed (kts)"])
+        row.trueAirspeed = parseUInt(fields["TrueAirspeed (kts)"])
+        row.verticalSpeed = parseInt(fields["VerticalSpeed (ft/min)"])
+        row.GPSLatitude = parseFloatZeroAsNull(fields["GPSLatitude"])
+        row.GPSLongitude = parseFloatZeroAsNull(fields["GPSLongitude"])
+        row.bodyYawRate = parseFloat(fields["BodyYawRate (°/sec)"])
+        row.bodyPitchRate = parseFloat(fields["BodyPitchRate (°/sec)"])
+        row.bodyRollRate = parseFloat(fields["BodyRollRate (°/sec)"])
+        row.magnetometerStatus = parseUInt8(fields["MagStatus"])
+        row.IRUStatus = parseUInt8(fields["IRUStatus"])
+        row.MPUStatus = parseUInt8(fields["MPUStatus"])
+        row.ADCStatus = fields["ADCStatus"]
+        row.AHRSSequence = parseUInt(fields["AHRSSeq"])
+        row.ADCSequence = parseUInt(fields["ADCSeq"])
+        row.AHRStartupMode = parseUInt8(fields["AHRSStartupMode"])
+
+        if let val = parseUInt8(fields["DFC100 Lat Active"]) {
+            row.DFC100_activeLateralMode = DFC100LateralMode(rawValue: val)
+        }
+        if let val = parseUInt8(fields["DFC100 Lat Armed"]) {
+            row.DFC100_armedLateralMode = DFC100LateralMode(rawValue: val)
+        }
+        if let val = parseUInt8(fields["DFC100 Vert Active"]) {
+            row.DFC100_activeVerticalMode = DFC100VerticalMode(rawValue: val)
+        }
+        if let val = parseUInt8(fields["DFC100 Vert Armed"]) {
+            row.DFC100_armedVerticalMode = DFC100VerticalMode(rawValue: val)
         }
 
-        return metadata
+        row.DFC100_statusFlags = parseUIntHex(fields["DFC100 Status Flags"])
+        row.DFC100_failFlags = parseUIntHex(fields["DFC100 Fail Flags"])
+        row.DFC100_altitudeTarget = parseInt(fields["DFC100 Alt Target"])
+
+        // Only return if we have a valid date
+        guard row.Date != nil && row.Time != nil else { return nil }
+        return .flightRow(row)
     }
 
-    private func parseEngineRecord(row: CSVReader.Record) async throws -> R9LogEntry {
-        let parser = R9RecordParser(row: row, record: R9EngineRecord())
+    private func parseSystemRow(fields: [String: String]) -> R9LogEntry? {
+        var row = R9SystemRow()
 
-        try await parser.parse(field: "Systime", into: \.systime)
-        try await parser.parse(dateField: "Date", timeField: "Time", into: \.date)
+        row.Systime = parseUInt(fields["Systime"])
+        row.Date = fields["Date"]
+        row.Time = fields["Time"]
 
-        if await parser.isPowerOn { return await .powerOn(date: parser.record.date!) }
-        if await parser.isIncrementalExtract { return await .incrementalExtract(date: parser.record.date!) }
+        row.oat = parseInt(fields["OutsideAirTemperature (°C)"])
+        row.localizerDeviation = parseFloat(fields["LocalizerDeviation (-1..1)"])
+        row.glideslopeDeviation = parseFloat(fields["GlideslopeDeviation (-1..1)"])
+        row.flightDirectorOnOff = parseBool(fields["FlightDirectorOn_Off"])
 
-        try await parser.parse(field: engineFields["oilTemperature"]!, into: \.oilTemperature)
-        try await parser.parse(field: engineFields["oilPressure"]!, into: \.oilPressure)
-        try await parser.parse(field: engineFields["RPM"]!, into: \.RPM)
-        try await parser.parse(field: engineFields["manifoldPressure"]!, into: \.manifoldPressure)
-        //        try await parser.parse(field: engineFields["TIT"]!, into: \.TIT)
-        try await parser.parse(field: engineFields["CHTs"]!, into: \.CHTs, count: 6)
-        try await parser.parse(field: engineFields["EGTs"]!, into: \.EGTs, count: 6)
-        try await parser.parse(field: engineFields["percentPower"]!, into: \.percentPower)
-        try await parser.parse(field: engineFields["fuelFlow"]!, into: \.fuelFlow)
-        try await parser.parse(field: engineFields["fuelUsed"]!, into: \.fuelUsed)
-        try await parser.parse(field: engineFields["fuelRemaining"]!, into: \.fuelRemaining)
-        try await parser.parse(field: engineFields["fuelTimeRemaining"]!, into: \.fuelTimeRemaining)
-        try await parser.parse(field: engineFields["fuelEconomy"]!, into: \.fuelEconomy)
-        //        try await parser.parse(field: engineFields["_alt1Current"]!, into: \._alt1Current)
-        //        try await parser.parse(field: engineFields["_alt2Current"]!, into: \._alt2Current)
-        //        try await parser.parse(field: engineFields["_bat1Current"]!, into: \._bat1Current)
-        //        try await parser.parse(field: engineFields["_bat2Current"]!, into: \._bat2Current)
-        try await parser.parse(field: engineFields["mainBus1Potential"]!, into: \.mainBus1Potential)
-        //        try parser.parse(field: engineFields["_mainBus2Potential"]!, into: \._mainBus2Potential)
-        try await parser.parse(field: engineFields["emergencyBusPotential"]!, into: \.emergencyBusPotential)
-        //        try await parser.parse(field: engineFields["_fuelQuantityLeft"]!, into: \._fuelQuantityLeft)
-        //        try await parser.parse(field: engineFields["_fuelQuantityRight"]!, into: \._fuelQuantityRight)
-        //        try await parser.parse(field: engineFields["_deiceVacuum"]!, into: \._deiceVacuum)
-        //        try await parser.parse(field: engineFields["_rudderTrim"]!, into: \._rudderTrim)
-        //        try await parser.parse(field: engineFields["_flapSetting"]!, into: \._flapSetting)
-        //        try await parser.parse(field: engineFields["_Ng"]!, into: \._Ng)
-        //        try await parser.parse(field: engineFields["_torque"]!, into: \._torque)
-        //        try await parser.parse(field: engineFields["_ITT"]!, into: \._ITT)
-        //        try await parser.parse(field: engineFields["_Np"]!, into: \._Np)
-        //        try await parser.parse(field: engineFields["_discreteInputs"]!, into: \._discreteInputs)
-        //        try await parser.parse(field: engineFields["_discreteOutputs"]!, into: \._discreteOutputs)
+        if let apModeStr = fields["AutopilotMode"] {
+            row.autopilotMode = AutopilotMode(rawValue: apModeStr)
+        }
 
-        return await .record(parser.record)
+        row.groundSpeed = parseUInt(fields["GroundSpeed (kts)"])
+        row.groundTrack = parseInt(fields["GroundTrack (°M)"])
+        row.crossTrackDeviation = parseFloat(fields["CrossTrackDeviation (nm)"])
+        row.verticalDeviation = parseInt(fields["VerticalDeviation (ft)"])
+        row.altimeterSetting = parseFloat(fields["AltimeterSetting (in.hg)"])
+        row.altitudeBug = parseInt(fields["AltBug (ft)"])
+        row.verticalSpeedBug = parseInt(fields["VSIBug (ft/min)"])
+        row.headingBug = parseUInt16(fields["HdgBug (°)"])
+        row.displayMode = parseUInt8(fields["DisplayMode"])
+        row.navigationMode = parseUInt8(fields["NavigationMode"])
+        row.activeWaypoint = fields["ActiveWptId"]
+        row.activeGPS = parseUInt8(fields["GPSSelect"])
+        row.navaidBearing = parseUInt16(fields["NavaidBrg (°M)"])
+        row.OBS = parseUInt16(fields["OBS (°M)"])
+        row.desiredTrack = parseUInt16(fields["DesiredTrack (°M)"])
+        row.navFrequency = parseUInt(fields["NavFreq (kHz)"])
+        row.courseSelect = parseUInt8(fields["CrsSelect"])
+        row.navType = parseUInt8(fields["NavType"])
+        row.courseDeviation = parseInt(fields["CourseDeviation (°)"])
+        row.GPSAltitude = parseInt(fields["GPSAltitude (m)"])
+        row.distanceToWaypoint = parseFloat(fields["DistanceToActiveWpt (nm)"])
+        row.GPSState = parseUInt8(fields["GPSState"])
+        row.GPSHorizontalProterctionLimit = parseFloat(fields["GPSHorizProtLimit (m)"])
+        row.GPSVerticalProterctionLimit = parseFloat(fields["GPSVertProtLimit (m)"])
+        row.SBAS_HPL = parseFloat(fields["HPL_SBAS (m)"])
+        row.SBAS_VPL = parseFloat(fields["VPL_SBAS (m)"])
+        row.HFOM = parseFloat(fields["HFOM (m)"])
+        row.VFOM = parseFloat(fields["VFOM (m)"])
+        row.FMSCourse = parseUInt16(fields["FmsCourse (°M)"])
+        row.magneticVariation = parseFloatZeroAsNull(fields["MagVar (° -W/+E)"])
+        row.GPSAltitudeMSL = parseInt(fields["GPS MSL Altitude (m)"])
+        row.GPSHeightAGL = parseInt(fields["GPS AGL Height (m)"])
+        row.FLTA_RTC = parseInt(fields["FLTA RTC (m)"])
+        row.FLTA_ATC = parseInt(fields["FLTA ATC (m)"])
+        row.FLTA_VerticalSpeed = parseInt(fields["FLTA vspd (fpm)"])
+        row.FLTA_RTCDistance = parseInt(fields["FLTA RTC dist (m)"])
+        row.FLTA_TerrainDistance = parseInt(fields["FLTA terr dist (m)"])
+        row.FLTA_Status = parseUInt8Hex(fields["FLTA Status"])
+
+        // Only return if we have a valid date
+        guard row.Date != nil && row.Time != nil else { return nil }
+        return .systemRow(row)
     }
 
-    private func parseFlightRecord(row: CSVReader.Record) async throws -> R9LogEntry {
-        let parser = R9RecordParser(row: row, record: R9FlightRecord())
+    private func parseDateFromRow(_ row: [String]) -> Date? {
+        guard row.count >= 3 else { return nil }
+        let dateStr = row[1]
+        let timeStr = row[2]
 
-        try await parser.parse(field: "Systime", into: \.systime)
-        try await parser.parse(dateField: "Date", timeField: "Time", into: \.date)
+        guard dateStr.count >= 8 else { return nil }
 
-        if await parser.isPowerOn { return await .powerOn(date: parser.record.date!) }
-        if await parser.isIncrementalExtract { return await .incrementalExtract(date: parser.record.date!) }
+        let year = Int(dateStr.prefix(4))
+        let month = Int(dateStr.dropFirst(4).prefix(2))
+        let day = Int(dateStr.suffix(2))
 
-        try await parser.parse(field: "Systime", into: \.systime)
-        try await parser.parse(dateField: "Date", timeField: "Time", into: \.date)
-        try await parser.parse(field: "Filtered NormAcc (G)", into: \.filteredNormalAcceleration)
-        try await parser.parse(field: "NormAcc (G)", into: \.normalAcceleration)
-        try await parser.parse(field: "LongAcc (G)", into: \.longitudinalAcceleration)
-        try await parser.parse(field: "LateralAcc (G)", into: \.lateralAcceleration)
-        try await parser.parse(field: "ADAHRSUsed", into: \.activeADAHRS)
-        try await parser.parse(field: "AHRSStatusbits", into: \.AHRSStatus, radix: 16, prefix: "0x")
-        try await parser.parse(field: "Heading (°M)", into: \.heading)
-        try await parser.parse(field: "Pitch (°)", into: \.pitch)
-        try await parser.parse(field: "Roll (°)", into: \.roll)
-        try await parser.parse(field: "FlightDirectorPitch (°)", into: \.FDPitch)
-        try await parser.parse(field: "FlightDirectorRoll (°)", into: \.FDRoll)
-        try await parser.parse(field: "HeadingRate (°/sec)", into: \.headingRate)
-        try await parser.parse(field: "PressureAltitude (ft)", into: \.pressureAltitude)
-        try await parser.parse(field: "IndicatedAirspeed (kts)", into: \.indicatedAirspeed)
-        try await parser.parse(field: "TrueAirspeed (kts)", into: \.trueAirspeed)
-        try await parser.parse(field: "VerticalSpeed (ft/min)", into: \.verticalSpeed)
-        try await parser.parse(field: "GPSLatitude", into: \.GPSLatitude, zeroIsNull: true)
-        try await parser.parse(field: "GPSLongitude", into: \.GPSLongitude, zeroIsNull: true)
-        try await parser.parse(field: "BodyYawRate (°/sec)", into: \.bodyYawRate)
-        try await parser.parse(field: "BodyPitchRate (°/sec)", into: \.bodyPitchRate)
-        try await parser.parse(field: "BodyRollRate (°/sec)", into: \.bodyRollRate)
-        try await parser.parse(field: "MagStatus", into: \.magnetometerStatus, radix: 16, prefix: "0x")
-        try await parser.parse(field: "IRUStatus", into: \.IRUStatus, radix: 16, prefix: "0x")
-        try await parser.parse(field: "MPUStatus", into: \.MPUStatus, radix: 16, prefix: "0x")
-        try await parser.parse(field: "ADCStatus", into: \.ADCStatus)
-        try await parser.parse(field: "AHRSSeq", into: \.AHRSSequence)
-        try await parser.parse(field: "ADCSeq", into: \.ADCSequence)
-        try await parser.parse(field: "AHRSStartupMode", into: \.AHRStartupMode)
-        try await parser.parse(field: "DFC100 Lat Active", into: \.DFC100_activeLateralMode)
-        try await parser.parse(field: "DFC100 Lat Armed", into: \.DFC100_armedLateralMode)
-        try await parser.parse(field: "DFC100 Vert Active", into: \.DFC100_activeVerticalMode)
-        try await parser.parse(field: "DFC100 Vert Armed", into: \.DFC100_armedVerticalMode)
-        try await parser.parse(field: "DFC100 Status Flags", into: \.DFC100_statusFlags, radix: 16, prefix: "0x")
-        try await parser.parse(field: "DFC100 Fail Flags", into: \.DFC100_failFlags, radix: 16, prefix: "0x")
-        try await parser.parse(field: "DFC100 Alt Target", into: \.DFC100_altitudeTarget)
+        let timeParts = timeStr.split(separator: ":")
+        guard timeParts.count == 3 else { return nil }
 
-        return await .record(parser.record)
+        let hour = Int(timeParts[0])
+        let minute = Int(timeParts[1])
+        let second = Int(timeParts[2])
+
+        guard let year, let month, let day, let hour, let minute, let second else { return nil }
+        guard year >= 2005 else { return nil }
+
+        var components = DateComponents()
+        components.timeZone = TimeZone(identifier: "UTC")
+        components.year = year
+        components.month = month
+        components.day = day
+        components.hour = hour
+        components.minute = minute
+        components.second = second
+
+        return Calendar.current.date(from: components)
     }
 
-    private func parseSystemRecord(row: CSVReader.Record) async throws -> R9LogEntry {
-        let parser = R9RecordParser(row: row, record: R9SystemRecord())
-
-        try await parser.parse(field: "Systime", into: \.systime)
-        try await parser.parse(dateField: "Date", timeField: "Time", into: \.date)
-
-        if await parser.isPowerOn { return await .powerOn(date: parser.record.date!) }
-        if await parser.isIncrementalExtract { return await .incrementalExtract(date: parser.record.date!) }
-
-        try await parser.parse(field: "Systime", into: \.systime)
-        try await parser.parse(dateField: "Date", timeField: "Time", into: \.date)
-        try await parser.parse(field: "OutsideAirTemperature (°C)", into: \.oat)
-        try await parser.parse(field: "LocalizerDeviation (-1..1)", into: \.localizerDeviation)
-        try await parser.parse(field: "GlideslopeDeviation (-1..1)", into: \.glideslopeDeviation)
-        try await parser.parse(field: "FlightDirectorOn_Off", into: \.flightDirectorOnOff)
-        try await parser.parse(field: "AutopilotMode", into: \.autopilotMode)
-        try await parser.parse(field: "GroundSpeed (kts)", into: \.groundSpeed)
-        try await parser.parse(field: "GroundTrack (°M)", into: \.groundTrack)
-        try await parser.parse(field: "CrossTrackDeviation (nm)", into: \.crossTrackDeviation)
-        try await parser.parse(field: "VerticalDeviation (ft)", into: \.verticalDeviation)
-        try await parser.parse(field: "AltimeterSetting (in.hg)", into: \.altimeterSetting)
-        try await parser.parse(field: "AltBug (ft)", into: \.altitudeBug)
-        try await parser.parse(field: "VSIBug (ft/min)", into: \.verticalSpeedBug)
-        try await parser.parse(field: "HdgBug (°)", into: \.headingBug)
-        try await parser.parse(field: "DisplayMode", into: \.displayMode)
-        try await parser.parse(field: "NavigationMode", into: \.navigationMode)
-        try await parser.parse(field: "ActiveWptId", into: \.activeWaypoint)
-        try await parser.parse(field: "GPSSelect", into: \.activeGPS)
-        try await parser.parse(field: "NavaidBrg (°M)", into: \.navaidBearing)
-        try await parser.parse(field: "OBS (°M)", into: \.OBS)
-        try await parser.parse(field: "DesiredTrack (°M)", into: \.desiredTrack)
-        try await parser.parse(field: "NavFreq (kHz)", into: \.navFrequency)
-        try await parser.parse(field: "CrsSelect", into: \.courseSelect)
-        try await parser.parse(field: "NavType", into: \.navType)
-        try await parser.parse(field: "CourseDeviation (°)", into: \.courseDeviation)
-        try await parser.parse(field: "GPSAltitude (m)", into: \.GPSAltitude)
-        try await parser.parse(field: "DistanceToActiveWpt (nm)", into: \.distanceToWaypoint)
-        try await parser.parse(field: "GPSState", into: \.GPSState)
-        try await parser.parse(field: "GPSHorizProtLimit (m)", into: \.GPSHorizontalProterctionLimit)
-        try await parser.parse(field: "GPSVertProtLimit (m)", into: \.GPSVerticalProterctionLimit)
-        try await parser.parse(field: "HPL_SBAS (m)", into: \.SBAS_HPL)
-        try await parser.parse(field: "VPL_SBAS (m)", into: \.SBAS_VPL)
-        try await parser.parse(field: "HFOM (m)", into: \.HFOM)
-        try await parser.parse(field: "VFOM (m)", into: \.VFOM)
-        try await parser.parse(field: "FmsCourse (°M)", into: \.FMSCourse)
-        try await parser.parse(field: "MagVar (° -W/+E)", into: \.magneticVariation, zeroIsNull: true)
-        try await parser.parse(field: "GPS MSL Altitude (m)", into: \.GPSAltitudeMSL)
-        try await parser.parse(field: "GPS AGL Height (m)", into: \.GPSHeightAGL)
-        try await parser.parse(field: "FLTA RTC (m)", into: \.FLTA_RTC)
-        try await parser.parse(field: "FLTA ATC (m)", into: \.FLTA_ATC)
-        try await parser.parse(field: "FLTA vspd (fpm)", into: \.FLTA_VerticalSpeed)
-        try await parser.parse(field: "FLTA RTC dist (m)", into: \.FLTA_RTCDistance)
-        try await parser.parse(field: "FLTA terr dist (m)", into: \.FLTA_TerrainDistance)
-        try await parser.parse(field: "FLTA Status", into: \.FLTA_Status, radix: 16, prefix: "0x")
-
-        return await .record(parser.record)
+    // Parsing helper functions
+    private func parseFloat(_ value: String?) -> Float? {
+        guard let value, !value.isEmpty, value != "-" else { return nil }
+        return Float(value)
     }
 
-    private func determineEngineFields(header: [String]) throws {
-        for (localField, externalFields) in Self.engineFields {
-            guard let externalField = externalFields.first(where: { field in
-                let indexField = field.replacingOccurrences(of: "#", with: "1")
-                return header.contains(indexField)
-            }) else {
-                throw AvidyneR9ToGarminError.missingHeaderField(externalFields)
-            }
-            engineFields[localField] = externalField
+    private func parseFloatZeroAsNull(_ value: String?) -> Float? {
+        guard let floatValue = parseFloat(value) else { return nil }
+        return floatValue.isZero ? nil : floatValue
+    }
+
+    private func parseUInt(_ value: String?) -> UInt? {
+        guard let value, !value.isEmpty, value != "-" else { return nil }
+        return UInt(value)
+    }
+
+    private func parseInt(_ value: String?) -> Int? {
+        guard let value, !value.isEmpty, value != "-" else { return nil }
+        return Int(value)
+    }
+
+    private func parseUInt8(_ value: String?) -> UInt8? {
+        guard let value, !value.isEmpty, value != "-" else { return nil }
+        return UInt8(value)
+    }
+
+    private func parseUInt16(_ value: String?) -> UInt16? {
+        guard let value, !value.isEmpty, value != "-" else { return nil }
+        return UInt16(value)
+    }
+
+    private func parseUInt8Hex(_ value: String?) -> UInt8? {
+        guard let value, !value.isEmpty, value != "-" else { return nil }
+        let cleaned = value.replacingOccurrences(of: "0x", with: "")
+        return UInt8(cleaned, radix: 16)
+    }
+
+    private func parseUIntHex(_ value: String?) -> UInt? {
+        guard let value, !value.isEmpty, value != "-" else { return nil }
+        let cleaned = value.replacingOccurrences(of: "0x", with: "")
+        return UInt(cleaned, radix: 16)
+    }
+
+    private func parseBool(_ value: String?) -> Bool? {
+        guard let value, !value.isEmpty, value != "-" else { return nil }
+        switch value {
+        case "0": return false
+        case "1": return true
+        default: return nil
         }
     }
 }
