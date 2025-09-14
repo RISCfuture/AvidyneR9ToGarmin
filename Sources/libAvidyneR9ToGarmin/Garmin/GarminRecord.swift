@@ -1,190 +1,193 @@
 import Foundation
 import StreamingCSV
 
+// Cached date formatters for performance
+private enum DateFormatters {
+    static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
+
+    static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
+}
+
 // Custom wrapper types for date and time formatting
-public struct DateOnly: CSVCodable, Sendable {
-    public let date: Date
+struct DateOnly: CSVCodable, Sendable {
+    let date: Date
 
-    public init(_ date: Date) {
+    var csvString: String {
+        return DateFormatters.dateFormatter.string(from: date)
+    }
+
+    init(_ date: Date) {
         self.date = date
     }
 
-    public init?(csvString: String) {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        guard let date = formatter.date(from: csvString) else { return nil }
+    init?(csvString: String) {
+        guard let date = DateFormatters.dateFormatter.date(from: csvString) else { return nil }
         self.date = date
-    }
-
-    public var csvString: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        return formatter.string(from: date)
     }
 }
 
-public struct TimeOnly: CSVCodable, Sendable {
-    public let date: Date
+struct TimeOnly: CSVCodable, Sendable {
+    let date: Date
 
-    public init(_ date: Date) {
+    var csvString: String {
+        return DateFormatters.timeFormatter.string(from: date)
+    }
+
+    init(_ date: Date) {
         self.date = date
     }
 
-    public init?(csvString: String) {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        guard let date = formatter.date(from: csvString) else { return nil }
+    init?(csvString: String) {
+        guard let date = DateFormatters.timeFormatter.date(from: csvString) else { return nil }
         self.date = date
-    }
-
-    public var csvString: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        return formatter.string(from: date)
     }
 }
 
 // Garmin CSV output format using StreamingCSV encoder
 @CSVRowEncoderBuilder
-public struct GarminRecord: Sendable {
+struct GarminRecord: Sendable {
     // Date and time fields - using wrapper types for proper formatting
-    @Field public var dateField: DateOnly { DateOnly(date) }
-    @Field public var timeField: TimeOnly { TimeOnly(date) }
-    @Field public var localTimeField: TimeOnly { TimeOnly(date) }
+    @Field var dateField: DateOnly { DateOnly(date) }
+    @Field var timeField: TimeOnly { TimeOnly(date) }
+    @Field var localTimeField: TimeOnly { TimeOnly(date) }
 
     // The actual date storage
-    public var date = Date()
-    @Field public var utcOffset: String = "+00:00"
+    var date = Date()
+    @Field var utcOffset: String = "+00:00"
 
     // GPS fields
-    @Field public var latitude: Float? // °
-    @Field public var longitude: Float? // °
-    @Field public var altitudeGPS: Int? // ft
-    @Field public var GPSFixStatus: GPSFixStatus? //  NoSoln, 3D, 3D-, 3DDiff
-    @Field public var timeOfWeek: String? // Empty in our case
-    @Field public var groundSpeed: Float? // kts
-    @Field public var groundTrack: UInt16? // °T
-    @Field public var eastVelocity: Float? // Empty in our case
-    @Field public var northVelocity: Float? // Empty in our case
-    @Field public var upVelocity: Float? // Empty in our case
+    @Field var latitude: Float? // °
+    @Field var longitude: Float? // °
+    @Field var altitudeGPS: Int? // ft
+    @Field var GPSFixStatus: GPSFixStatus? //  NoSoln, 3D, 3D-, 3DDiff
+    @Field var timeOfWeek: String? // Empty in our case
+    @Field var groundSpeed: Float? // kts
+    @Field var groundTrack: UInt16? // °T
+    @Field var eastVelocity: Float? // Empty in our case
+    @Field var northVelocity: Float? // Empty in our case
+    @Field var upVelocity: Float? // Empty in our case
 
     // Flight instruments
-    @Field public var heading: Float? // °M
-    @Field public var PDOP: Float? // Empty in our case
-    @Field public var GPSSats: Int? // Empty in our case
-    @Field public var pressureAltitude: Int? // ft
-    @Field public var baroAltitude: Int? // ft
-    @Field public var verticalSpeed: Int? // fpm
-    @Field public var indicatedAirspeed: Float? // kts
-    @Field public var trueAirspeed: Float? // kts
-    @Field public var pitch: Float? // °
-    @Field public var roll: Float? // °
-    @Field public var lateralAcceleration: Float? // g
-    @Field public var normalAcceleration: Float? // g
+    @Field var heading: Float? // °M
+    @Field var PDOP: Float? // Empty in our case
+    @Field var GPSSats: Int? // Empty in our case
+    @Field var pressureAltitude: Int? // ft
+    @Field var baroAltitude: Int? // ft
+    @Field var verticalSpeed: Int? // fpm
+    @Field var indicatedAirspeed: Float? // kts
+    @Field var trueAirspeed: Float? // kts
+    @Field var pitch: Float? // °
+    @Field var roll: Float? // °
+    @Field var lateralAcceleration: Float? // g
+    @Field var normalAcceleration: Float? // g
 
     // Autopilot/Flight Director
-    @Field public var headingBug: UInt16? // °M
-    @Field public var altitudeBug: Int? // ft
-    @Field public var selectedVS: Int? // Empty in our case
-    @Field public var selectedAirspeed: Float? // Empty in our case
-    @Field public var altimeterSetting: Float? // inHg
+    @Field var headingBug: UInt16? // °M
+    @Field var altitudeBug: Int? // ft
+    @Field var selectedVS: Int? // Empty in our case
+    @Field var selectedAirspeed: Float? // Empty in our case
+    @Field var altimeterSetting: Float? // inHg
 
     // Radios (mostly empty)
-    @Field public var COM1: String? // Empty
-    @Field public var COM2: String? // Empty
-    @Field public var NAV1: String? // Empty
+    @Field var COM1: String? // Empty
+    @Field var COM2: String? // Empty
+    @Field var NAV1: String? // Empty
 
     // Navigation
-    @Field public var navSource: String? // GPS1
-    @Field public var navAnnunciation: String? // Empty
-    @Field public var navIdentifier: String?
-    @Field public var navDistance: Float? // NM
-    @Field public var navBearing: UInt16? // °M
-    @Field public var navCourse: UInt16? // °M
-    @Field public var crossTrackDistance: Float? // NM
-    @Field public var horizontalCDIDeflection: Float? // -1..1
-    @Field public var horizontalCDIFullScale: Float? // Empty
-    @Field public var horizontalCDIScale: String? // OCN, TERM, ENR, etc.
-    @Field public var verticalCDIDeflection: Float? // -1..1
-    @Field public var verticalCDIFullScale: Float? // Empty
-    @Field public var VNAVCDIDeflection: Float? // Empty
-    @Field public var VNAVTargetAltitude: Int? // ft
+    @Field var navSource: String? // GPS1
+    @Field var navAnnunciation: String? // Empty
+    @Field var navIdentifier: String?
+    @Field var navDistance: Float? // NM
+    @Field var navBearing: UInt16? // °M
+    @Field var navCourse: UInt16? // °M
+    @Field var crossTrackDistance: Float? // NM
+    @Field var horizontalCDIDeflection: Float? // -1..1
+    @Field var horizontalCDIFullScale: Float? // Empty
+    @Field var horizontalCDIScale: String? // OCN, TERM, ENR, etc.
+    @Field var verticalCDIDeflection: Float? // -1..1
+    @Field var verticalCDIFullScale: Float? // Empty
+    @Field var VNAVCDIDeflection: Float? // Empty
+    @Field var VNAVTargetAltitude: Int? // ft
 
     // Autopilot modes
-    @Field public var autopilotState: String? // AP, Fail
-    @Field public var FDLateralMode: String? // active (armed)
-    @Field public var FDVerticalMode: String? // active (armed)
-    @Field public var FDRollCommand: Float? // °
-    @Field public var FDPitchCommand: Float? // °
-    @Field public var FDAltitude: Int? // Empty
-    @Field public var APRollCommand: Float? // °
-    @Field public var APPitchCommand: Float? // °
-    @Field public var APVSCommand: Int? // Empty
-    @Field public var APAltitudeCommand: Int? // Empty
-    @Field public var APRollTorque: Float? // Empty
-    @Field public var APPitchTorque: Float? // Empty
-    @Field public var APRollTrimMotor: Float? // Empty
-    @Field public var APPitchTrimMotor: Float? // Empty
+    @Field var autopilotState: String? // AP, Fail
+    @Field var FDLateralMode: String? // active (armed)
+    @Field var FDVerticalMode: String? // active (armed)
+    @Field var FDRollCommand: Float? // °
+    @Field var FDPitchCommand: Float? // °
+    @Field var FDAltitude: Int? // Empty
+    @Field var APRollCommand: Float? // °
+    @Field var APPitchCommand: Float? // °
+    @Field var APVSCommand: Int? // Empty
+    @Field var APAltitudeCommand: Int? // Empty
+    @Field var APRollTorque: Float? // Empty
+    @Field var APPitchTorque: Float? // Empty
+    @Field var APRollTrimMotor: Float? // Empty
+    @Field var APPitchTrimMotor: Float? // Empty
 
     // Environment
-    @Field public var magneticVariation: Float? // °
-    @Field public var outsideAirTemperature: Float? // °C
-    @Field public var densityAltitude: Int? // ft
-    @Field public var heightAGL: Int?
-    @Field public var windSpeed: Float? // kt
-    @Field public var windDirection: Int? // °T
+    @Field var magneticVariation: Float? // °
+    @Field var outsideAirTemperature: Float? // °C
+    @Field var densityAltitude: Int? // ft
+    @Field var heightAGL: Int?
+    @Field var windSpeed: Float? // kt
+    @Field var windDirection: Int? // °T
 
     // System status (mostly empty)
-    @Field public var AHRSStatus: String? // Empty
-    @Field public var AHRSDev: Float? // Empty
-    @Field public var magnetometerStatus: String? // Empty
-    @Field public var networkStatus: String? // Empty
-    @Field public var transponderCode: String? // Empty
-    @Field public var transponderMode: String? // Empty
+    @Field var AHRSStatus: String? // Empty
+    @Field var AHRSDev: Float? // Empty
+    @Field var magnetometerStatus: String? // Empty
+    @Field var networkStatus: String? // Empty
+    @Field var transponderCode: String? // Empty
+    @Field var transponderMode: String? // Empty
 
     // Engine parameters
-    @Field public var oilTemperature: Int? // °F
-    @Field public var fuelLQty: Float? // Empty - fuel left qty
-    @Field public var fuelRQty: Float? // Empty - fuel right qty
-    @Field public var fuelPress: Float? // Empty - fuel pressure
-    @Field public var oilPressure: UInt? // psi
-    @Field public var RPM: UInt? // rpm
-    @Field public var manifoldPressure: Float? // inHg
-    @Field public var potential1: Float? // V
-    @Field public var potential2: Float? // V
-    @Field public var amps1: Float? // Empty
-    @Field public var amps2: Float? // Empty
-    @Field public var fuelFlow: Float? // gph
-    @Field public var elevatorTrim: Float? // Empty
-    @Field public var aileronTrim: Float? // Empty
+    @Field var oilTemperature: Int? // °F
+    @Field var fuelLQty: Float? // Empty - fuel left qty
+    @Field var fuelRQty: Float? // Empty - fuel right qty
+    @Field var fuelPress: Float? // Empty - fuel pressure
+    @Field var oilPressure: UInt? // psi
+    @Field var RPM: UInt? // rpm
+    @Field var manifoldPressure: Float? // inHg
+    @Field var potential1: Float? // V
+    @Field var potential2: Float? // V
+    @Field var amps1: Float? // Empty
+    @Field var amps2: Float? // Empty
+    @Field var fuelFlow: Float? // gph
+    @Field var elevatorTrim: Float? // Empty
+    @Field var aileronTrim: Float? // Empty
 
     // CHTs and EGTs - as arrays that will be expanded
-    @Fields(6) public var CHTs: [Int?] = Array(repeating: nil, count: 6) // °F
-    @Fields(6) public var EGTs: [Int?] = Array(repeating: nil, count: 6) // °F
+    @Fields(6)
+    var CHTs: [Int?] = Array(repeating: nil, count: 6) // °F
+    @Fields(6)
+    var EGTs: [Int?] = Array(repeating: nil, count: 6) // °F
 
-    @Field public var percentPower: UInt8? // %
-    @Field public var CASAlert: String? // Empty
-    @Field public var terrainAlert: String? // Empty
-    @Field public var engineCycleCount: Int? // Empty
+    @Field var percentPower: UInt8? // %
+    @Field var CASAlert: String? // Empty
+    @Field var terrainAlert: String? // Empty
+    @Field var engineCycleCount: Int? // Empty
 }
 
 // Custom date formatter for Garmin CSV
 extension GarminRecord {
-    public func formatDate() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        return formatter.string(from: date)
+    func formatDate() -> String {
+        return DateFormatters.dateFormatter.string(from: date)
     }
 
-    public func formatTime() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        return formatter.string(from: date)
+    func formatTime() -> String {
+        return DateFormatters.timeFormatter.string(from: date)
     }
 }

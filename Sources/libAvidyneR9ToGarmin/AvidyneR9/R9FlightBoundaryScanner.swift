@@ -2,29 +2,23 @@ import Foundation
 import Logging
 import StreamingCSV
 
-public struct FlightBoundary: Sendable {
-    public let startTime: Date
-    public let endTime: Date?
-    public let sourceFiles: Set<String>
+struct FlightBoundary: Sendable {
+    let startTime: Date
+    let endTime: Date?
+    let sourceFiles: Set<String>
 }
 
-public actor R9FlightBoundaryScanner {
+actor R9FlightBoundaryScanner {
     private let logger: Logger?
     private let progressManager: ProgressManager?
     private let timeWindow: TimeInterval = 30.0 // 30 seconds to group PFD/MFD power-ons
 
-    public init(logger: Logger? = nil, progressManager: ProgressManager? = nil) {
+    init(logger: Logger? = nil, progressManager: ProgressManager? = nil) {
         self.logger = logger
         self.progressManager = progressManager
     }
 
-    public struct ScanResult: Sendable {
-        public let boundaries: [FlightBoundary]
-        public let totalFiles: Int
-        public let scannedFiles: Int
-    }
-
-    public func scanForFlightBoundaries(in directory: URL) async throws -> ScanResult {
+    func scanForFlightBoundaries(in directory: URL) async throws -> ScanResult {
         var powerOnEvents: [(date: Date, file: String)] = []
         var totalFiles = 0
         var scannedFiles = 0
@@ -246,5 +240,11 @@ public actor R9FlightBoundaryScanner {
         }
 
         return boundaries
+    }
+
+    struct ScanResult: Sendable {
+        let boundaries: [FlightBoundary]
+        let totalFiles: Int
+        let scannedFiles: Int
     }
 }

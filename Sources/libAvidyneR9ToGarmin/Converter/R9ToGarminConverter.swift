@@ -2,7 +2,7 @@ import Foundation
 import Logging
 import StreamingCSV
 
-/// Memory-efficient converter using two-phase approach with StreamingCSV
+/// Converter for transforming Avidyne R9 CSV files to Garmin G1000-compatible format
 public actor R9ToGarminConverter {
     private static let headers = """
     #airframe_info,log_version="1.00",log_content_version="1.02",product="GDU 460",aircraft_ident="N171MA",unit_software_part_number="710-00118-000",product="GDU 460",software_version="9.00",system_id="M093570387",unit="PFD1"
@@ -23,42 +23,41 @@ public actor R9ToGarminConverter {
     private static let recordingInterval: TimeInterval = 4.0
     private static let timeWindowSize: TimeInterval = 8.0 // Buffer 8 seconds of records
 
-    /// The logger instance.
-    public var logger: Logger?
+    var logger: Logger?
 
-    /// Progress reporter for external monitoring
-    public var progressReporter: (@Sendable (Float, String) -> Void)?
-    public var progressManager: ProgressManager?
-
-    /// Memory usage statistics
-    public struct MemoryStats: Sendable {
-        public let phase1MemoryMB: Double
-        public let phase2PeakMemoryMB: Double
-        public let totalProcessingTime: TimeInterval
-    }
+    var progressReporter: (@Sendable (Float, String) -> Void)?
+    var progressManager: ProgressManager?
 
     private var stats = MemoryStats(phase1MemoryMB: 0, phase2PeakMemoryMB: 0, totalProcessingTime: 0)
 
-    /// Creates a new streaming converter.
+    /// Creates a new R9ToGarminConverter instance
     public init() {}
 
-    /// Sets the logger instance.
+    /// Sets the logger for conversion process output
+    /// - Parameter logger: The logger instance to use, or nil to disable logging
     public func setLogger(_ logger: Logger?) { self.logger = logger }
 
-    /// Sets the progress reporter.
+    /// Sets a progress reporter callback for conversion updates
+    /// - Parameter reporter: Callback receiving progress (0.0-1.0) and status message
     public func setProgressReporter(_ reporter: @escaping @Sendable (Float, String) -> Void) {
         self.progressReporter = reporter
     }
 
-    /// Sets the progress manager for detailed tracking.
+    /// Sets the progress manager for detailed progress tracking
+    /// - Parameter manager: The ProgressManager instance to use
     public func setProgressManager(_ manager: ProgressManager) {
         self.progressManager = manager
     }
 
-    /// Gets memory statistics from the last conversion
+    /// Returns memory usage statistics from the conversion process
+    /// - Returns: MemoryStats containing phase memory usage and processing time
     public func getMemoryStats() -> MemoryStats { stats }
 
-    /// Converts R9 records to Garmin format using two-phase streaming approach
+    /// Converts Avidyne R9 CSV files to Garmin format
+    /// - Parameters:
+    ///   - inputDirectory: Directory containing R9 CSV files
+    ///   - outputDirectory: Directory where Garmin CSV files will be written
+    /// - Throws: AvidyneR9ToGarminError if conversion fails
     public func convert(from inputDirectory: URL, to outputDirectory: URL) async throws {
         let startTime = Date()
 
@@ -138,16 +137,16 @@ public actor R9ToGarminConverter {
 
                         for try await entry in try await parser.parse() {
                             switch entry {
-                            case .engineRow(let row):
-                                await combiner.addEngineRow(row)
-                            case .engineLegacyRow(let row):
-                                await combiner.addEngineLegacyRow(row)
-                            case .flightRow(let row):
-                                await combiner.addFlightRow(row)
-                            case .systemRow(let row):
-                                await combiner.addSystemRow(row)
-                            case .powerOn, .incrementalExtract:
-                                break // Already handled in Phase 1
+                                case .engineRow(let row):
+                                    await combiner.addEngineRow(row)
+                                case .engineLegacyRow(let row):
+                                    await combiner.addEngineLegacyRow(row)
+                                case .flightRow(let row):
+                                    await combiner.addFlightRow(row)
+                                case .systemRow(let row):
+                                    await combiner.addSystemRow(row)
+                                case .powerOn, .incrementalExtract:
+                                    break // Already handled in Phase 1
                             }
                         }
                     } catch {
@@ -279,7 +278,7 @@ public actor R9ToGarminConverter {
                   let name = resourceValues.name else { continue }
 
             if !isDirectory && name.hasSuffix(".CSV") &&
-               (name.contains("_ENGINE") || name.contains("_FLIGHT") || name.contains("_SYSTEM")) {
+                (name.contains("_ENGINE") || name.contains("_FLIGHT") || name.contains("_SYSTEM")) {
                 csvFiles.append(url)
             }
         }
@@ -316,12 +315,12 @@ public actor R9ToGarminConverter {
         var info = mach_task_basic_info()
         var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4
 
-        let result = withUnsafeMutablePointer(to: &info) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
+        let result = withUnsafeMutablePointer(to: &info) { infoPtr in
+            infoPtr.withMemoryRebound(to: integer_t.self, capacity: 1) { intPtr in
                 task_info(mach_task_self_,
-                         task_flavor_t(MACH_TASK_BASIC_INFO),
-                         $0,
-                         &count)
+                          task_flavor_t(MACH_TASK_BASIC_INFO),
+                          intPtr,
+                          &count)
             }
         }
 
@@ -513,18 +512,19 @@ public actor R9ToGarminConverter {
         // Use the toCSVRow() method generated by @CSVRowEncoderBuilder
         return record.toCSVRow()
     }
+
+    /// Statistics about memory usage during conversion
+    public struct MemoryStats: Sendable {
+        /// Memory usage in MB during phase 1 (scanning)
+        public let phase1MemoryMB: Double
+        /// Peak memory usage in MB during phase 2 (processing)
+        public let phase2PeakMemoryMB: Double
+        /// Total time taken for the conversion process
+        public let totalProcessingTime: TimeInterval
+    }
 }
 
-/// Combines records within a time window for streaming processing
 actor StreamingRecordCombiner {
-    struct RecordBundle {
-        var engineRows: [R9EngineRow] = []
-        var engineLegacyRows: [R9EngineLegacyRow] = []
-        var flightRows: [R9FlightRow] = []
-        var systemRows: [R9SystemRow] = []
-        var date: Date
-    }
-
     private let timeWindow: TimeInterval
     private let logger: Logger?
     private var buffer: [Date: RecordBundle] = [:]
@@ -642,32 +642,79 @@ actor StreamingRecordCombiner {
         return buffer.count
     }
 
+    // Fast date parser that avoids DateComponents and Calendar overhead
     private func parseDateTime(dateStr: String, timeStr: String) -> Date? {
-        guard dateStr.count >= 8 else { return nil }
+        // Validate input lengths
+        guard dateStr.count == 8, timeStr.count == 8 else { return nil }
 
-        let year = Int(dateStr.prefix(4))
-        let month = Int(dateStr.dropFirst(4).prefix(2))
-        let day = Int(dateStr.suffix(2))
+        // Direct string index parsing for date (YYYYMMDD format)
+        let dateChars = Array(dateStr)
+        guard dateChars.allSatisfy(\.isNumber) else { return nil }
 
-        let timeParts = timeStr.split(separator: ":")
-        guard timeParts.count == 3 else { return nil }
+        // Convert character digits to integers efficiently
+        let digits = dateChars.map { Int($0.asciiValue! - 48) }
+        let year = digits[0] * 1000 + digits[1] * 100 + digits[2] * 10 + digits[3]
+        let month = digits[4] * 10 + digits[5]
+        let day = digits[6] * 10 + digits[7]
 
-        let hour = Int(timeParts[0])
-        let minute = Int(timeParts[1])
-        let second = Int(timeParts[2])
+        guard year >= 2005, month >= 1, month <= 12, day >= 1, day <= 31 else { return nil }
 
-        guard let year, let month, let day, let hour, let minute, let second else { return nil }
-        guard year >= 2005 else { return nil }
+        // Direct string index parsing for time (HH:MM:SS format)
+        let timeChars = Array(timeStr)
+        guard timeChars[2] == ":", timeChars[5] == ":" else { return nil }
 
-        var components = DateComponents()
-        components.timeZone = TimeZone(identifier: "UTC")
-        components.year = year
-        components.month = month
-        components.day = day
-        components.hour = hour
-        components.minute = minute
-        components.second = second
+        guard let hour = Int(String(timeChars[0...1])),
+              let minute = Int(String(timeChars[3...4])),
+              let second = Int(String(timeChars[6...7])) else { return nil }
 
-        return Calendar.current.date(from: components)
+        guard hour >= 0, hour < 24, minute >= 0, minute < 60, second >= 0, second < 60 else { return nil }
+
+        // Calculate Unix timestamp directly (avoiding Calendar)
+        // Using a simplified calculation for dates after 2000
+        let daysFrom2001 = daysSince2001(year: year, month: month, day: day)
+        let secondsInDay = hour * 3600 + minute * 60 + second
+
+        // Reference date is 2001-01-01 00:00:00 UTC (NSDate reference)
+        let totalSeconds = Double(daysFrom2001 * 86400 + secondsInDay)
+
+        return Date(timeIntervalSinceReferenceDate: totalSeconds)
+    }
+
+    // Helper function to calculate days since 2001-01-01
+    private func daysSince2001(year: Int, month: Int, day: Int) -> Int {
+        // Days in months (non-leap year)
+        let daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+        var totalDays = 0
+
+        // Add days for complete years
+        for y in 2001..<year {
+            totalDays += isLeapYear(y) ? 366 : 365
+        }
+
+        // Add days for complete months in current year
+        for m in 1..<month {
+            totalDays += daysInMonth[m - 1]
+            if m == 2 && isLeapYear(year) {
+                totalDays += 1
+            }
+        }
+
+        // Add remaining days
+        totalDays += day - 1
+
+        return totalDays
+    }
+
+    private func isLeapYear(_ year: Int) -> Bool {
+        return (year.isMultiple(of: 4) && !year.isMultiple(of: 100)) || year.isMultiple(of: 400)
+    }
+
+    struct RecordBundle {
+        var engineRows: [R9EngineRow] = []
+        var engineLegacyRows: [R9EngineLegacyRow] = []
+        var flightRows: [R9FlightRow] = []
+        var systemRows: [R9SystemRow] = []
+        var date: Date
     }
 }

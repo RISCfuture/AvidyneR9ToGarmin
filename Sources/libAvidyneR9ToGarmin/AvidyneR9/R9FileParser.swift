@@ -2,7 +2,7 @@ import Foundation
 import Logging
 import StreamingCSV
 
-public enum R9LogEntry: Sendable {
+enum R9LogEntry: Sendable {
     case engineRow(_ row: R9EngineRow)
     case engineLegacyRow(_ row: R9EngineLegacyRow)
     case flightRow(_ row: R9FlightRow)
@@ -11,14 +11,14 @@ public enum R9LogEntry: Sendable {
     case incrementalExtract(date: Date)
 }
 
-public actor R9FileParser {
+actor R9FileParser {
     let url: URL
     let type: R9RecordType
     var logger: Logger?
 
     private var path: String { url.path }
 
-    public init?(url: URL, logger: Logger? = nil) throws {
+    init?(url: URL, logger: Logger? = nil) throws {
         self.url = url
         self.logger = logger
 
@@ -32,7 +32,7 @@ public actor R9FileParser {
         }
     }
 
-    public func parse() throws -> AsyncThrowingStream<R9LogEntry, Error> {
+    func parse() throws -> AsyncThrowingStream<R9LogEntry, Error> {
         return AsyncThrowingStream { continuation in
             Task {
                 do {
@@ -44,9 +44,12 @@ public actor R9FileParser {
                         return
                     }
 
+                    // Pre-compute column indices for faster lookup
+                    let columnIndices = createColumnIndexMap(headers: headers)
+
                     // Process data rows
                     while let row = try await reader.readRow() {
-                        if let entry = try parseRow(row, headers: headers) {
+                        if let entry = try parseRowOptimized(row, columnIndices: columnIndices) {
                             continuation.yield(entry)
                         }
                     }
@@ -56,6 +59,54 @@ public actor R9FileParser {
                 }
                 continuation.finish()
             }
+        }
+    }
+
+    // Create a map of column names to indices for O(1) lookup
+    private func createColumnIndexMap(headers: [String]) -> [String: Int] {
+        var map: [String: Int] = [:]
+        for (index, header) in headers.enumerated() {
+            map[header] = index
+        }
+        return map
+    }
+
+    // Optimized row parser using pre-computed indices
+    private func parseRowOptimized(_ row: [String], columnIndices: [String: Int]) throws -> R9LogEntry? {
+        // Check for special rows first
+        if row.count > 3 {
+            if row[3] == powerOnSentinel || (!row.isEmpty && row[0] == powerOnSentinel) {
+                if let date = parseDateFromRow(row) {
+                    return .powerOn(date: date)
+                }
+            }
+            if row[3] == incrementalExtractSentinel || (!row.isEmpty && row[0] == incrementalExtractSentinel) {
+                if let date = parseDateFromRow(row) {
+                    return .incrementalExtract(date: date)
+                }
+            }
+        }
+
+        // Helper function to get value by column name
+        func getValue(_ columnName: String) -> String? {
+            guard let index = columnIndices[columnName],
+                  index < row.count else { return nil }
+            let value = row[index]
+            return value.isEmpty ? nil : value
+        }
+
+        switch type {
+        case .engine:
+            // Determine if this is legacy format
+            let isLegacy = columnIndices["Eng1OilTemperature(°F)"] != nil
+            if isLegacy {
+                return parseEngineLegacyRowOptimized(row: row, columnIndices: columnIndices, getValue: getValue)
+            }
+            return parseEngineRowOptimized(row: row, columnIndices: columnIndices, getValue: getValue)
+        case .flight:
+            return parseFlightRowOptimized(row: row, columnIndices: columnIndices, getValue: getValue)
+        case .system:
+            return parseSystemRowOptimized(row: row, columnIndices: columnIndices, getValue: getValue)
         }
     }
 
@@ -76,10 +127,8 @@ public actor R9FileParser {
 
         // Create dictionary for field access
         var fields: [String: String] = [:]
-        for (index, header) in headers.enumerated() {
-            if index < row.count {
-                fields[header] = row[index]
-            }
+        for (index, header) in headers.enumerated() where index < row.count {
+            fields[header] = row[index]
         }
 
         // Skip empty rows
@@ -100,6 +149,139 @@ public actor R9FileParser {
         case .system:
             return parseSystemRow(fields: fields)
         }
+    }
+
+    // Optimized parsing functions using pre-computed indices
+    private func parseEngineRowOptimized(row _: [String], columnIndices _: [String: Int], getValue: (String) -> String?) -> R9LogEntry? {
+        var engineRow = R9EngineRow()
+
+        engineRow.Systime = getValue("Systime").flatMap(parseUInt)
+        engineRow.Date = getValue("Date")
+        engineRow.Time = getValue("Time")
+
+        engineRow.oilTemperature = getValue("Eng1 Oil Temperature").flatMap(parseInt)
+        engineRow.oilPressure = getValue("Eng1 Oil Pressure").flatMap(parseUInt)
+        engineRow.RPM = getValue("Eng1 RPM").flatMap(parseUInt)
+        engineRow.manifoldPressure = getValue("Eng1 Manifold Pressure (In.Hg)").flatMap(parseFloat)
+
+        // CHT fields
+        engineRow.CHT1 = getValue("Eng1 CHT1 (°F)").flatMap(parseFloat)
+        engineRow.CHT2 = getValue("Eng1 CHT2 (°F)").flatMap(parseFloat)
+        engineRow.CHT3 = getValue("Eng1 CHT3 (°F)").flatMap(parseFloat)
+        engineRow.CHT4 = getValue("Eng1 CHT4 (°F)").flatMap(parseFloat)
+        engineRow.CHT5 = getValue("Eng1 CHT5 (°F)").flatMap(parseFloat)
+        engineRow.CHT6 = getValue("Eng1 CHT6 (°F)").flatMap(parseFloat)
+
+        // EGT fields
+        engineRow.EGT1 = getValue("Eng1 EGT1 (°F)").flatMap(parseFloat)
+        engineRow.EGT2 = getValue("Eng1 EGT2 (°F)").flatMap(parseFloat)
+        engineRow.EGT3 = getValue("Eng1 EGT3 (°F)").flatMap(parseFloat)
+        engineRow.EGT4 = getValue("Eng1 EGT4 (°F)").flatMap(parseFloat)
+        engineRow.EGT5 = getValue("Eng1 EGT5 (°F)").flatMap(parseFloat)
+        engineRow.EGT6 = getValue("Eng1 EGT6 (°F)").flatMap(parseFloat)
+
+        engineRow.percentPower = getValue("Eng1 Percent Pwr").flatMap(parseFloat)
+        engineRow.fuelFlow = getValue("FuelFlow").flatMap(parseFloat)
+        engineRow.mainBus1Potential = getValue("Eng1 MBus1 Volts").flatMap(parseFloat)
+        engineRow.emergencyBusPotential = getValue("Eng1 Bus2 Volts").flatMap(parseFloat)
+
+        return .engineRow(engineRow)
+    }
+
+    private func parseEngineLegacyRowOptimized(row _: [String], columnIndices _: [String: Int], getValue: (String) -> String?) -> R9LogEntry? {
+        var engineRow = R9EngineLegacyRow()
+
+        engineRow.Systime = getValue("Systime").flatMap(parseUInt)
+        engineRow.Date = getValue("Date")
+        engineRow.Time = getValue("Time")
+
+        engineRow.oilTemperature = getValue("Eng1OilTemperature(°F)").flatMap(parseInt)
+        engineRow.oilPressure = getValue("Eng1OilPressure").flatMap(parseUInt)
+        engineRow.RPM = getValue("Eng1RPM").flatMap(parseUInt)
+        engineRow.manifoldPressure = getValue("Eng1ManifoldPressure(In.Hg)").flatMap(parseFloat)
+
+        // CHT fields
+        engineRow.CHT1 = getValue("Eng1CHT1(°F)").flatMap(parseFloat)
+        engineRow.CHT2 = getValue("Eng1CHT2(°F)").flatMap(parseFloat)
+        engineRow.CHT3 = getValue("Eng1CHT3(°F)").flatMap(parseFloat)
+        engineRow.CHT4 = getValue("Eng1CHT4(°F)").flatMap(parseFloat)
+        engineRow.CHT5 = getValue("Eng1CHT5(°F)").flatMap(parseFloat)
+        engineRow.CHT6 = getValue("Eng1CHT6(°F)").flatMap(parseFloat)
+
+        // EGT fields
+        engineRow.EGT1 = getValue("Eng1EGT1(°F)").flatMap(parseFloat)
+        engineRow.EGT2 = getValue("Eng1EGT2(°F)").flatMap(parseFloat)
+        engineRow.EGT3 = getValue("Eng1EGT3(°F)").flatMap(parseFloat)
+        engineRow.EGT4 = getValue("Eng1EGT4(°F)").flatMap(parseFloat)
+        engineRow.EGT5 = getValue("Eng1EGT5(°F)").flatMap(parseFloat)
+        engineRow.EGT6 = getValue("Eng1EGT6(°F)").flatMap(parseFloat)
+
+        engineRow.percentPower = getValue("Eng1PercentPwr").flatMap(parseFloat)
+        engineRow.fuelFlow = getValue("FuelFlow(Gal/hr)").flatMap(parseFloat)
+        engineRow.mainBus1Potential = getValue("Eng1Bus1Volts").flatMap(parseFloat)
+        engineRow.emergencyBusPotential = getValue("Eng1Bus3Volts").flatMap(parseFloat)
+
+        return .engineLegacyRow(engineRow)
+    }
+
+    private func parseFlightRowOptimized(row _: [String], columnIndices _: [String: Int], getValue: (String) -> String?) -> R9LogEntry? {
+        var flightRow = R9FlightRow()
+
+        flightRow.Systime = getValue("Systime").flatMap(parseUInt)
+        flightRow.Date = getValue("Date")
+        flightRow.Time = getValue("Time")
+
+        flightRow.filteredNormalAcceleration = getValue("Filtered NormAcc (G)").flatMap(parseFloat)
+        flightRow.normalAcceleration = getValue("NormAcc (G)").flatMap(parseFloat)
+        flightRow.longitudinalAcceleration = getValue("LongAcc (G)").flatMap(parseFloat)
+        flightRow.lateralAcceleration = getValue("LateralAcc (G)").flatMap(parseFloat)
+        flightRow.heading = getValue("Heading (°M)").flatMap(parseFloat)
+        flightRow.pitch = getValue("Pitch (°)").flatMap(parseFloat)
+        flightRow.roll = getValue("Roll (°)").flatMap(parseFloat)
+        flightRow.pressureAltitude = getValue("PressureAltitude (ft)").flatMap(parseInt)
+        flightRow.indicatedAirspeed = getValue("IndicatedAirspeed (kts)").flatMap(parseUInt)
+        flightRow.trueAirspeed = getValue("TrueAirspeed (kts)").flatMap(parseUInt)
+        flightRow.verticalSpeed = getValue("VerticalSpeed (ft/min)").flatMap(parseInt)
+        flightRow.GPSLatitude = getValue("GPSLatitude").flatMap(parseFloat)
+        flightRow.GPSLongitude = getValue("GPSLongitude").flatMap(parseFloat)
+
+        if let latMode = getValue("DFC100 Lat Active").flatMap(parseUInt8) {
+            flightRow.DFC100_activeLateralMode = DFC100LateralMode(rawValue: latMode)
+        }
+        if let vertMode = getValue("DFC100 Vert Active").flatMap(parseUInt8) {
+            flightRow.DFC100_activeVerticalMode = DFC100VerticalMode(rawValue: vertMode)
+        }
+
+        return .flightRow(flightRow)
+    }
+
+    private func parseSystemRowOptimized(row _: [String], columnIndices _: [String: Int], getValue: (String) -> String?) -> R9LogEntry? {
+        var systemRow = R9SystemRow()
+
+        systemRow.Systime = getValue("Systime").flatMap(parseUInt)
+        systemRow.Date = getValue("Date")
+        systemRow.Time = getValue("Time")
+
+        systemRow.oat = getValue("OutsideAirTemperature (°C)").flatMap(parseInt)
+        systemRow.groundSpeed = getValue("GroundSpeed (kts)").flatMap(parseUInt)
+        systemRow.groundTrack = getValue("GroundTrack (°M)").flatMap(parseInt)
+        systemRow.altimeterSetting = getValue("AltimeterSetting (in.hg)").flatMap(parseFloat)
+        systemRow.altitudeBug = getValue("AltBug (ft)").flatMap(parseInt)
+        systemRow.headingBug = getValue("HdgBug (°)").flatMap(parseUInt16)
+        systemRow.activeWaypoint = getValue("ActiveWptId")
+        systemRow.navaidBearing = getValue("NavaidBrg (°M)").flatMap(parseUInt16)
+        systemRow.OBS = getValue("OBS (°M)").flatMap(parseUInt16)
+        systemRow.desiredTrack = getValue("DesiredTrack (°M)").flatMap(parseUInt16)
+        systemRow.FMSCourse = getValue("FMSCourse (°M)").flatMap(parseUInt16)
+        systemRow.magneticVariation = getValue("MagneticVariation (°)").flatMap(parseFloat)
+        systemRow.distanceToWaypoint = getValue("DistanceToActiveWpt (nm)").flatMap(parseFloat)
+        systemRow.crossTrackDeviation = getValue("CrossTrackDeviation (nm)").flatMap(parseFloat)
+
+        if let apModeStr = getValue("AutopilotMode") {
+            systemRow.autopilotMode = AutopilotMode(rawValue: apModeStr)
+        }
+
+        return .systemRow(systemRow)
     }
 
     private func parseEngineRow(fields: [String: String]) -> R9LogEntry? {

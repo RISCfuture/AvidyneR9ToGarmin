@@ -3,7 +3,7 @@ import StreamingCSV
 
 // MARK: - Enums for known status/mode values
 
-public enum AutopilotMode: String, CSVCodable, Sendable {
+enum AutopilotMode: String, CSVCodable, Sendable {
     case off = "OFF"
     case on = "ON"
     case fail = "FAIL"
@@ -16,14 +16,14 @@ public enum AutopilotMode: String, CSVCodable, Sendable {
     case glideslope = "GS"
 }
 
-public enum GPSFixStatus: String, CSVCodable, Sendable {
+enum GPSFixStatus: String, CSVCodable, Sendable {
     case noSolution = "NoSoln"
     case fix3D = "3D"
     case fix3DMinus = "3D-"
     case fix3DDiff = "3DDiff"
 }
 
-public enum DFC100LateralMode: UInt8, CSVCodable, Sendable {
+enum DFC100LateralMode: UInt8, CSVCodable, Sendable {
     case off = 0
     case roll = 1
     case heading = 2
@@ -33,7 +33,7 @@ public enum DFC100LateralMode: UInt8, CSVCodable, Sendable {
     case goAround = 6
 }
 
-public enum DFC100VerticalMode: UInt8, CSVCodable, Sendable {
+enum DFC100VerticalMode: UInt8, CSVCodable, Sendable {
     case off = 0
     case pitch = 1
     case verticalSpeed = 2
@@ -46,214 +46,214 @@ public enum DFC100VerticalMode: UInt8, CSVCodable, Sendable {
 // CSVRow structs for direct parsing - StreamingCSV will map based on property names
 // The actual CSV headers will be handled by the decoder created from headers
 
-public struct R9EngineRow: Sendable {
-    public var Systime: UInt?
-    public var Date: String?
-    public var Time: String?
+struct R9EngineRow: Sendable {
+    var Systime: UInt?
+    var Date: String?
+    var Time: String?
 
     // These will be mapped to the actual CSV column names via the decoder
     // We'll handle the mapping when creating the decoder from headers
-    public var oilTemperature: Int?
-    public var oilPressure: UInt?
-    public var RPM: UInt?
-    public var manifoldPressure: Float?
-    public var TIT: Float?
-    public var CHT1: Float?
-    public var CHT2: Float?
-    public var CHT3: Float?
-    public var CHT4: Float?
-    public var CHT5: Float?
-    public var CHT6: Float?
-    public var EGT1: Float?
-    public var EGT2: Float?
-    public var EGT3: Float?
-    public var EGT4: Float?
-    public var EGT5: Float?
-    public var EGT6: Float?
-    public var percentPower: Float?
-    public var fuelFlow: Float?
-    public var fuelUsed: Float?
-    public var fuelRemaining: Float?
-    public var fuelTimeRemaining: Int?
-    public var fuelEconomy: Float?
-    public var alt1Current: Float?
-    public var alt2Current: Float?
-    public var batCurrent: Float?
-    public var bat2Current: Float?
-    public var mainBus1Potential: Float?
-    public var mainBus2Potential: Float?
-    public var emergencyBusPotential: Float?
+    var oilTemperature: Int?
+    var oilPressure: UInt?
+    var RPM: UInt?
+    var manifoldPressure: Float?
+    var TIT: Float?
+    var CHT1: Float?
+    var CHT2: Float?
+    var CHT3: Float?
+    var CHT4: Float?
+    var CHT5: Float?
+    var CHT6: Float?
+    var EGT1: Float?
+    var EGT2: Float?
+    var EGT3: Float?
+    var EGT4: Float?
+    var EGT5: Float?
+    var EGT6: Float?
+    var percentPower: Float?
+    var fuelFlow: Float?
+    var fuelUsed: Float?
+    var fuelRemaining: Float?
+    var fuelTimeRemaining: Int?
+    var fuelEconomy: Float?
+    var alt1Current: Float?
+    var alt2Current: Float?
+    var batCurrent: Float?
+    var bat2Current: Float?
+    var mainBus1Potential: Float?
+    var mainBus2Potential: Float?
+    var emergencyBusPotential: Float?
 }
 
-public struct R9EngineLegacyRow: Sendable {
-    public var Systime: UInt?
-    public var Date: String?
-    public var Time: String?
+struct R9EngineLegacyRow: Sendable {
+    var Systime: UInt?
+    var Date: String?
+    var Time: String?
 
     // These match the property names used in the legacy format
-    public var oilTemperature: Int?
-    public var oilPressure: UInt?
-    public var RPM: UInt?
-    public var manifoldPressure: Float?
-    public var TIT: Float?
-    public var CHT1: Float?
-    public var CHT2: Float?
-    public var CHT3: Float?
-    public var CHT4: Float?
-    public var CHT5: Float?
-    public var CHT6: Float?
-    public var EGT1: Float?
-    public var EGT2: Float?
-    public var EGT3: Float?
-    public var EGT4: Float?
-    public var EGT5: Float?
-    public var EGT6: Float?
-    public var percentPower: Float?
-    public var fuelFlow: Float?
-    public var fuelUsed: Float?
-    public var fuelRemaining: Float?
-    public var fuelTimeRemaining: Int?
-    public var fuelEconomy: Float?
-    public var alt1Current: Float?
-    public var alt2Current: Float?
-    public var batCurrent: Float?
-    public var bat2Current: Float?
-    public var mainBus1Potential: Float?
-    public var mainBus2Potential: Float?
-    public var emergencyBusPotential: Float?
+    var oilTemperature: Int?
+    var oilPressure: UInt?
+    var RPM: UInt?
+    var manifoldPressure: Float?
+    var TIT: Float?
+    var CHT1: Float?
+    var CHT2: Float?
+    var CHT3: Float?
+    var CHT4: Float?
+    var CHT5: Float?
+    var CHT6: Float?
+    var EGT1: Float?
+    var EGT2: Float?
+    var EGT3: Float?
+    var EGT4: Float?
+    var EGT5: Float?
+    var EGT6: Float?
+    var percentPower: Float?
+    var fuelFlow: Float?
+    var fuelUsed: Float?
+    var fuelRemaining: Float?
+    var fuelTimeRemaining: Int?
+    var fuelEconomy: Float?
+    var alt1Current: Float?
+    var alt2Current: Float?
+    var batCurrent: Float?
+    var bat2Current: Float?
+    var mainBus1Potential: Float?
+    var mainBus2Potential: Float?
+    var emergencyBusPotential: Float?
 }
 
 extension R9EngineRow {
-    public func isPowerOn() -> Bool {
+    func isPowerOn() -> Bool {
         return false // Will be handled at parse time
     }
 
-    public func isIncrementalExtract() -> Bool {
+    func isIncrementalExtract() -> Bool {
         return false // Will be handled at parse time
     }
 }
 
 extension R9EngineLegacyRow {
-    public func isPowerOn() -> Bool {
+    func isPowerOn() -> Bool {
         return false // Will be handled at parse time
     }
 
-    public func isIncrementalExtract() -> Bool {
+    func isIncrementalExtract() -> Bool {
         return false // Will be handled at parse time
     }
 }
 
-public struct R9FlightRow: Sendable {
-    public var Systime: UInt?
-    public var Date: String?
-    public var Time: String?
-    public var filteredNormalAcceleration: Float?
-    public var normalAcceleration: Float?
-    public var longitudinalAcceleration: Float?
-    public var lateralAcceleration: Float?
-    public var activeADAHRS: UInt8?
-    public var AHRSStatus: UInt8?
-    public var heading: Float?
-    public var pitch: Float?
-    public var roll: Float?
-    public var FDPitch: Float?
-    public var FDRoll: Float?
-    public var headingRate: Float?
-    public var pressureAltitude: Int?
-    public var indicatedAirspeed: UInt?
-    public var trueAirspeed: UInt?
-    public var verticalSpeed: Int?
-    public var GPSLatitude: Float?
-    public var GPSLongitude: Float?
-    public var bodyYawRate: Float?
-    public var bodyPitchRate: Float?
-    public var bodyRollRate: Float?
-    public var magnetometerStatus: UInt8?
-    public var IRUStatus: UInt8?
-    public var MPUStatus: UInt8?
-    public var ADCStatus: String?
-    public var AHRSSequence: UInt?
-    public var ADCSequence: UInt?
-    public var AHRStartupMode: UInt8?
-    public var DFC100_activeLateralMode: DFC100LateralMode?
-    public var DFC100_armedLateralMode: DFC100LateralMode?
-    public var DFC100_activeVerticalMode: DFC100VerticalMode?
-    public var DFC100_armedVerticalMode: DFC100VerticalMode?
-    public var DFC100_statusFlags: UInt?
-    public var DFC100_failFlags: UInt?
-    public var DFC100_altitudeTarget: Int?
+struct R9FlightRow: Sendable {
+    var Systime: UInt?
+    var Date: String?
+    var Time: String?
+    var filteredNormalAcceleration: Float?
+    var normalAcceleration: Float?
+    var longitudinalAcceleration: Float?
+    var lateralAcceleration: Float?
+    var activeADAHRS: UInt8?
+    var AHRSStatus: UInt8?
+    var heading: Float?
+    var pitch: Float?
+    var roll: Float?
+    var FDPitch: Float?
+    var FDRoll: Float?
+    var headingRate: Float?
+    var pressureAltitude: Int?
+    var indicatedAirspeed: UInt?
+    var trueAirspeed: UInt?
+    var verticalSpeed: Int?
+    var GPSLatitude: Float?
+    var GPSLongitude: Float?
+    var bodyYawRate: Float?
+    var bodyPitchRate: Float?
+    var bodyRollRate: Float?
+    var magnetometerStatus: UInt8?
+    var IRUStatus: UInt8?
+    var MPUStatus: UInt8?
+    var ADCStatus: String?
+    var AHRSSequence: UInt?
+    var ADCSequence: UInt?
+    var AHRStartupMode: UInt8?
+    var DFC100_activeLateralMode: DFC100LateralMode?
+    var DFC100_armedLateralMode: DFC100LateralMode?
+    var DFC100_activeVerticalMode: DFC100VerticalMode?
+    var DFC100_armedVerticalMode: DFC100VerticalMode?
+    var DFC100_statusFlags: UInt?
+    var DFC100_failFlags: UInt?
+    var DFC100_altitudeTarget: Int?
 }
 
 extension R9FlightRow {
-    public func isPowerOn() -> Bool {
+    func isPowerOn() -> Bool {
         // POWER ON markers appear as special string values in numeric fields
         return false // Will be handled at parse time
     }
 
-    public func isIncrementalExtract() -> Bool {
+    func isIncrementalExtract() -> Bool {
         return false // Will be handled at parse time
     }
 }
 
-public struct R9SystemRow: Sendable {
-    public var Systime: UInt?
-    public var Date: String?
-    public var Time: String?
-    public var oat: Int?
-    public var localizerDeviation: Float?
-    public var glideslopeDeviation: Float?
-    public var flightDirectorOnOff: Bool?
-    public var autopilotMode: AutopilotMode?
-    public var groundSpeed: UInt?
-    public var groundTrack: Int?
-    public var crossTrackDeviation: Float?
-    public var verticalDeviation: Int?
-    public var altimeterSetting: Float?
-    public var altitudeBug: Int?
-    public var verticalSpeedBug: Int?
-    public var headingBug: UInt16?
-    public var displayMode: UInt8?
-    public var navigationMode: UInt8?
-    public var activeWaypoint: String?
-    public var activeGPS: UInt8?
-    public var navaidBearing: UInt16?
-    public var OBS: UInt16?
-    public var desiredTrack: UInt16?
-    public var navFrequency: UInt?
-    public var courseSelect: UInt8?
-    public var navType: UInt8?
-    public var courseDeviation: Int?
-    public var GPSAltitude: Int?
-    public var distanceToWaypoint: Float?
-    public var GPSState: UInt8?
-    public var GPSHorizontalProterctionLimit: Float?
-    public var GPSVerticalProterctionLimit: Float?
-    public var SBAS_HPL: Float?
-    public var SBAS_VPL: Float?
-    public var HFOM: Float?
-    public var VFOM: Float?
-    public var FMSCourse: UInt16?
-    public var magneticVariation: Float?
-    public var GPSAltitudeMSL: Int?
-    public var GPSHeightAGL: Int?
-    public var FLTA_RTC: Int?
-    public var FLTA_ATC: Int?
-    public var FLTA_VerticalSpeed: Int?
-    public var FLTA_RTCDistance: Int?
-    public var FLTA_TerrainDistance: Int?
-    public var FLTA_Status: UInt8?
+struct R9SystemRow: Sendable {
+    var Systime: UInt?
+    var Date: String?
+    var Time: String?
+    var oat: Int?
+    var localizerDeviation: Float?
+    var glideslopeDeviation: Float?
+    var flightDirectorOnOff: Bool?
+    var autopilotMode: AutopilotMode?
+    var groundSpeed: UInt?
+    var groundTrack: Int?
+    var crossTrackDeviation: Float?
+    var verticalDeviation: Int?
+    var altimeterSetting: Float?
+    var altitudeBug: Int?
+    var verticalSpeedBug: Int?
+    var headingBug: UInt16?
+    var displayMode: UInt8?
+    var navigationMode: UInt8?
+    var activeWaypoint: String?
+    var activeGPS: UInt8?
+    var navaidBearing: UInt16?
+    var OBS: UInt16?
+    var desiredTrack: UInt16?
+    var navFrequency: UInt?
+    var courseSelect: UInt8?
+    var navType: UInt8?
+    var courseDeviation: Int?
+    var GPSAltitude: Int?
+    var distanceToWaypoint: Float?
+    var GPSState: UInt8?
+    var GPSHorizontalProterctionLimit: Float?
+    var GPSVerticalProterctionLimit: Float?
+    var SBAS_HPL: Float?
+    var SBAS_VPL: Float?
+    var HFOM: Float?
+    var VFOM: Float?
+    var FMSCourse: UInt16?
+    var magneticVariation: Float?
+    var GPSAltitudeMSL: Int?
+    var GPSHeightAGL: Int?
+    var FLTA_RTC: Int?
+    var FLTA_ATC: Int?
+    var FLTA_VerticalSpeed: Int?
+    var FLTA_RTCDistance: Int?
+    var FLTA_TerrainDistance: Int?
+    var FLTA_Status: UInt8?
 }
 
 extension R9SystemRow {
-    public func isPowerOn() -> Bool {
+    func isPowerOn() -> Bool {
         // POWER ON markers appear as special string values in numeric fields
         return false // Will be handled at parse time
     }
 
-    public func isIncrementalExtract() -> Bool {
+    func isIncrementalExtract() -> Bool {
         return false // Will be handled at parse time
     }
 }
 
-internal let powerOnSentinel = "<<<< **** POWER ON **** >>>>"
-internal let incrementalExtractSentinel = "<< Incremental extract >>"
+let powerOnSentinel = "<<<< **** POWER ON **** >>>>"
+let incrementalExtractSentinel = "<< Incremental extract >>"
